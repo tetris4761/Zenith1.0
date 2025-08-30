@@ -40,3 +40,4 @@ echo "3. Add your environment variables in Vercel dashboard"
 echo "4. Deploy!"
 echo ""
 echo "✨ Your app will be live at: https://your-project.vercel.app"
+

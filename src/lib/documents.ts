@@ -1,15 +1,5 @@
-import { getSupabaseClient } from './supabase';
-
-export interface Document {
-  id: string;
-  title: string;
-  content: string;
-  folder_id?: string;
-  user_id: string;
-  created_at: string;
-  updated_at: string;
-  last_accessed: string;
-}
+import { requireSupabaseClient } from './supabase';
+import type { Document } from '../types';
 
 export interface CreateDocumentData {
   title: string;
@@ -28,23 +18,23 @@ export interface UpdateDocumentData {
  */
 export async function createDocument(data: CreateDocumentData): Promise<{ data: Document | null; error: string | null }> {
   try {
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      return { data: null, error: 'Supabase client not configured' };
-    }
-
+    const supabase = requireSupabaseClient();
+    
+    // Get the current user ID from the auth context
     const { data: { user } } = await supabase.auth.getUser();
+    
     if (!user) {
       return { data: null, error: 'User not authenticated' };
     }
-
+    
     const { data: document, error } = await supabase
       .from('documents')
       .insert({
         title: data.title,
         content: data.content,
-        folder_id: data.folder_id || null,
+        folder_id: data.folder_id,
         user_id: user.id,
+        last_accessed: new Date().toISOString(),
       })
       .select()
       .single();
@@ -54,7 +44,7 @@ export async function createDocument(data: CreateDocumentData): Promise<{ data: 
     }
 
     return { data: document, error: null };
-  } catch (error) {
+  } catch (err) {
     return { data: null, error: 'Failed to create document' };
   }
 }
@@ -64,14 +54,19 @@ export async function createDocument(data: CreateDocumentData): Promise<{ data: 
  */
 export async function getDocuments(): Promise<{ data: Document[] | null; error: string | null }> {
   try {
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      return { data: null, error: 'Supabase client not configured' };
+    const supabase = requireSupabaseClient();
+    
+    // Get the current user ID from the auth context
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (!user) {
+      return { data: null, error: 'User not authenticated' };
     }
-
+    
     const { data: documents, error } = await supabase
       .from('documents')
       .select('*')
+      .eq('user_id', user.id)
       .order('updated_at', { ascending: false });
 
     if (error) {
@@ -79,8 +74,8 @@ export async function getDocuments(): Promise<{ data: Document[] | null; error: 
     }
 
     return { data: documents, error: null };
-  } catch (error) {
-    return { data: null, error: 'Failed to fetch documents' };
+  } catch (err) {
+    return { data: null, error: 'Failed to load documents' };
   }
 }
 
@@ -89,15 +84,20 @@ export async function getDocuments(): Promise<{ data: Document[] | null; error: 
  */
 export async function getDocument(id: string): Promise<{ data: Document | null; error: string | null }> {
   try {
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      return { data: null, error: 'Supabase client not configured' };
+    const supabase = requireSupabaseClient();
+    
+    // Get the current user ID from the auth context
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (!user) {
+      return { data: null, error: 'User not authenticated' };
     }
-
+    
     const { data: document, error } = await supabase
       .from('documents')
       .select('*')
       .eq('id', id)
+      .eq('user_id', user.id)
       .single();
 
     if (error) {
@@ -105,8 +105,8 @@ export async function getDocument(id: string): Promise<{ data: Document | null; 
     }
 
     return { data: document, error: null };
-  } catch (error) {
-    return { data: null, error: 'Failed to fetch document' };
+  } catch (err) {
+    return { data: null, error: 'Failed to load document' };
   }
 }
 
@@ -115,11 +115,8 @@ export async function getDocument(id: string): Promise<{ data: Document | null; 
  */
 export async function updateDocument(id: string, data: UpdateDocumentData): Promise<{ data: Document | null; error: string | null }> {
   try {
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      return { data: null, error: 'Supabase client not configured' };
-    }
-
+    const supabase = requireSupabaseClient();
+    
     const { data: document, error } = await supabase
       .from('documents')
       .update({
@@ -136,7 +133,7 @@ export async function updateDocument(id: string, data: UpdateDocumentData): Prom
     }
 
     return { data: document, error: null };
-  } catch (error) {
+  } catch (err) {
     return { data: null, error: 'Failed to update document' };
   }
 }
@@ -146,11 +143,8 @@ export async function updateDocument(id: string, data: UpdateDocumentData): Prom
  */
 export async function deleteDocument(id: string): Promise<{ error: string | null }> {
   try {
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      return { error: 'Supabase client not configured' };
-    }
-
+    const supabase = requireSupabaseClient();
+    
     const { error } = await supabase
       .from('documents')
       .delete()
@@ -161,7 +155,7 @@ export async function deleteDocument(id: string): Promise<{ error: string | null
     }
 
     return { error: null };
-  } catch (error) {
+  } catch (err) {
     return { error: 'Failed to delete document' };
   }
 }
@@ -171,14 +165,19 @@ export async function deleteDocument(id: string): Promise<{ error: string | null
  */
 export async function searchDocuments(query: string): Promise<{ data: Document[] | null; error: string | null }> {
   try {
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      return { data: null, error: 'Supabase client not configured' };
+    const supabase = requireSupabaseClient();
+    
+    // Get the current user ID from the auth context
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (!user) {
+      return { data: null, error: 'User not authenticated' };
     }
-
+    
     const { data: documents, error } = await supabase
       .from('documents')
       .select('*')
+      .eq('user_id', user.id)
       .or(`title.ilike.%${query}%,content.ilike.%${query}%`)
       .order('updated_at', { ascending: false });
 
@@ -187,7 +186,7 @@ export async function searchDocuments(query: string): Promise<{ data: Document[]
     }
 
     return { data: documents, error: null };
-  } catch (error) {
+  } catch (err) {
     return { data: null, error: 'Failed to search documents' };
   }
 }

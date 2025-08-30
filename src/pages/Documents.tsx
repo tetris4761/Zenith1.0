@@ -1,27 +1,30 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { 
-  Save, 
-  Plus, 
-  Folder, 
-  FileText, 
-  MoreVertical,
-  Search,
-  Filter,
-  Trash2,
-  Edit3
-} from 'lucide-react';
+import Underline from '@tiptap/extension-underline';
+import TextAlign from '@tiptap/extension-text-align';
+import { Table } from '@tiptap/extension-table';
+import TableRow from '@tiptap/extension-table-row';
+import TableCell from '@tiptap/extension-table-cell';
+import TableHeader from '@tiptap/extension-table-header';
+import Link from '@tiptap/extension-link';
+import Image from '@tiptap/extension-image';
+import CodeBlock from '@tiptap/extension-code-block';
+import { Save, Plus, FileText } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { 
-  Document, 
   createDocument, 
   getDocuments, 
   updateDocument, 
   deleteDocument,
   searchDocuments 
 } from '../lib/documents';
+import type { Document } from '../types';
 import { useAuth } from '../contexts/AuthContext';
+import DocumentList from '../components/documents/DocumentList';
+import EditorToolbar from '../components/documents/EditorToolbar';
+import LinkDialog from '../components/documents/LinkDialog';
+import ImageDialog from '../components/documents/ImageDialog';
 
 export default function Documents() {
   const { user } = useAuth();
@@ -33,13 +36,64 @@ export default function Documents() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newDocumentTitle, setNewDocumentTitle] = useState('');
+  const [showLinkDialog, setShowLinkDialog] = useState(false);
+  const [showImageDialog, setShowImageDialog] = useState(false);
 
+  // Initialize TipTap editor
   const editor = useEditor({
-    extensions: [StarterKit],
+    extensions: [
+      StarterKit.configure({
+        bulletList: {
+          keepMarks: true,
+          keepAttributes: false,
+        },
+        orderedList: {
+          keepMarks: true,
+          keepAttributes: false,
+        },
+      }),
+      Underline,
+      TextAlign.configure({
+        types: ['heading', 'paragraph'],
+      }),
+      Table.configure({
+        resizable: true,
+        HTMLAttributes: {
+          class: 'border-collapse border border-gray-300',
+        },
+      }),
+      TableRow,
+      TableHeader.configure({
+        HTMLAttributes: {
+          class: 'bg-gray-100 font-semibold',
+        },
+      }),
+      TableCell.configure({
+        HTMLAttributes: {
+          class: 'border border-gray-300 p-2',
+        },
+      }),
+      Link.configure({
+        openOnClick: false,
+        HTMLAttributes: {
+          class: 'text-blue-600 underline cursor-pointer',
+        },
+      }),
+      Image.configure({
+        HTMLAttributes: {
+          class: 'max-w-full h-auto',
+        },
+      }),
+      CodeBlock.configure({
+        HTMLAttributes: {
+          class: 'bg-gray-100 p-4 rounded font-mono text-sm',
+        },
+      }),
+    ],
     content: '<p>Start writing your notes...</p>',
     editorProps: {
       attributes: {
-        class: 'prose prose-sm sm:prose lg:prose-lg xl:prose-2xl mx-auto focus:outline-none',
+        class: 'prose prose-sm sm:prose lg:prose-lg xl:prose-2xl mx-auto focus:outline-none min-h-[500px] p-4',
       },
     },
   });
@@ -62,6 +116,13 @@ export default function Documents() {
     }, 30000); // 30 seconds
 
     return () => clearInterval(interval);
+  }, [selectedDocument, editor]);
+
+  // Load document content when selection changes
+  useEffect(() => {
+    if (selectedDocument && editor) {
+      editor.commands.setContent(selectedDocument.content);
+    }
   }, [selectedDocument, editor]);
 
   const loadDocuments = async () => {
@@ -217,128 +278,44 @@ export default function Documents() {
     }
   };
 
-  const filteredDocuments = documents.filter(doc =>
-    doc.title.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handleSelectDocument = useCallback((document: Document) => {
+    setSelectedDocument(document);
+    setShowNewDocument(false);
+  }, []);
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
+  const handleInsertLink = (url: string) => {
+    if (editor) {
+      editor.chain().focus().setLink({ href: url }).run();
+    }
+  };
+
+  const handleInsertImage = (url: string) => {
+    if (editor) {
+      editor.chain().focus().insertContent(`<img src="${url}" alt="Image" />`).run();
+    }
   };
 
   return (
     <div className="h-full flex">
       {/* Left Sidebar - Document List */}
-      <div className="w-80 bg-white border-r border-neutral-200 flex flex-col">
-        <div className="p-4 border-b border-neutral-200">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-neutral-900">Documents</h2>
-            <button
-              onClick={handleNewDocument}
-              className="btn-primary flex items-center space-x-2"
-            >
-              <Plus className="w-4 h-4" />
-              <span>New</span>
-            </button>
-          </div>
-          
-          {/* Search */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-neutral-400" />
-            <input
-              type="text"
-              placeholder="Search documents..."
-              value={searchTerm}
-              onChange={(e) => handleSearch(e.target.value)}
-              className="input pl-10"
-            />
-          </div>
-        </div>
-
-        {/* Document List */}
-        <div className="flex-1 overflow-y-auto p-4">
-          {loading ? (
-            <div className="text-center py-8">
-              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600 mx-auto"></div>
-              <p className="text-sm text-neutral-500 mt-2">Loading documents...</p>
-            </div>
-          ) : error ? (
-            <div className="text-center py-8">
-              <p className="text-sm text-red-500 mb-2">{error}</p>
-              <button 
-                onClick={loadDocuments}
-                className="text-sm text-primary-600 hover:text-primary-700"
-              >
-                Try again
-              </button>
-            </div>
-          ) : filteredDocuments.length === 0 ? (
-            <div className="text-center py-8">
-              <FileText className="w-12 h-12 text-neutral-300 mx-auto mb-2" />
-              <p className="text-sm text-neutral-500">
-                {searchTerm ? 'No documents found' : 'No documents yet'}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {filteredDocuments.map((doc) => (
-                <div
-                  key={doc.id}
-                  onClick={() => setSelectedDocument(doc)}
-                  className={cn(
-                    'p-3 rounded-lg cursor-pointer transition-colors duration-200',
-                    selectedDocument?.id === doc.id
-                      ? 'bg-primary-50 border border-primary-200'
-                      : 'hover:bg-neutral-50'
-                  )}
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center space-x-2 mb-1">
-                        <FileText className="w-4 h-4 text-neutral-400" />
-                        <h3 className="font-medium text-neutral-900 truncate">{doc.title}</h3>
-                      </div>
-                      <div className="flex items-center space-x-2 text-sm text-neutral-500">
-                        <span>•</span>
-                        <span>{formatDate(doc.updated_at)}</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center space-x-1">
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedDocument(doc);
-                        }}
-                        className="p-1 hover:bg-neutral-100 rounded"
-                      >
-                        <Edit3 className="w-4 h-4 text-neutral-400" />
-                      </button>
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteDocument(doc.id);
-                        }}
-                        className="p-1 hover:bg-red-50 rounded hover:text-red-600"
-                      >
-                        <Trash2 className="w-4 h-4 text-neutral-400" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      <DocumentList
+        documents={documents}
+        selectedDocument={selectedDocument}
+        loading={loading}
+        error={error}
+        searchTerm={searchTerm}
+        onNewDocument={handleNewDocument}
+        onSelectDocument={handleSelectDocument}
+        onDeleteDocument={handleDeleteDocument}
+        onSearch={handleSearch}
+        onRetry={loadDocuments}
+      />
 
       {/* Main Editor Area */}
       <div className="flex-1 flex flex-col bg-white">
-        {/* Editor Toolbar */}
+        {/* Editor Header */}
         <div className="border-b border-neutral-200 p-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-4">
               {showNewDocument && (
                 <input
@@ -378,10 +355,19 @@ export default function Documents() {
               )}
             </div>
           </div>
+
+          {/* Rich Text Editor Toolbar */}
+          {(showNewDocument || selectedDocument) && (
+            <EditorToolbar
+              editor={editor}
+              onInsertLink={() => setShowLinkDialog(true)}
+              onInsertImage={() => setShowImageDialog(true)}
+            />
+          )}
         </div>
 
         {/* Editor Content */}
-        <div className="flex-1 p-6 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto">
           {showNewDocument || selectedDocument ? (
             <div className="max-w-4xl mx-auto">
               <EditorContent editor={editor} />
@@ -404,6 +390,19 @@ export default function Documents() {
           )}
         </div>
       </div>
+
+      {/* Dialogs */}
+      <LinkDialog
+        isOpen={showLinkDialog}
+        onClose={() => setShowLinkDialog(false)}
+        onInsert={handleInsertLink}
+      />
+      
+      <ImageDialog
+        isOpen={showImageDialog}
+        onClose={() => setShowImageDialog(false)}
+        onInsert={handleInsertImage}
+      />
     </div>
   );
 }

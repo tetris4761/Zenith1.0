@@ -40,3 +40,4 @@ export function requireSupabaseClient(): SupabaseClient {
   }
   return client;
 }
+
