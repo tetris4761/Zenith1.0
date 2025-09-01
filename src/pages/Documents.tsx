@@ -16,28 +16,43 @@ import {
   createDocument, 
   getDocuments, 
   updateDocument, 
-  deleteDocument,
-  searchDocuments 
+  deleteDocument
 } from '../lib/documents';
-import type { Document } from '../types';
+import { 
+  createFolder, 
+  getFolders, 
+  updateFolder, 
+  deleteFolder,
+  moveFolder 
+} from '../lib/folders';
+import type { Document, Folder } from '../types';
+import type { FolderWithChildren } from '../lib/folders';
 import { useAuth } from '../contexts/AuthContext';
-import DocumentList from '../components/documents/DocumentList';
 import EditorToolbar from '../components/documents/EditorToolbar';
 import LinkDialog from '../components/documents/LinkDialog';
 import ImageDialog from '../components/documents/ImageDialog';
+import FolderDialog from '../components/documents/FolderDialog';
+import UnifiedSidebar from '../components/documents/UnifiedSidebar';
 
 export default function Documents() {
   const { user } = useAuth();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
   const [showNewDocument, setShowNewDocument] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newDocumentTitle, setNewDocumentTitle] = useState('');
   const [showLinkDialog, setShowLinkDialog] = useState(false);
   const [showImageDialog, setShowImageDialog] = useState(false);
+  
+  // Folder state
+  const [folders, setFolders] = useState<FolderWithChildren[]>([]);
+  const [showFolderDialog, setShowFolderDialog] = useState(false);
+  const [folderDialogMode, setFolderDialogMode] = useState<'create' | 'edit'>('create');
+  const [editingFolder, setEditingFolder] = useState<FolderWithChildren | null>(null);
+  const [folderParentId, setFolderParentId] = useState<string | undefined>(undefined);
 
   // Initialize TipTap editor
   const editor = useEditor({
@@ -98,12 +113,20 @@ export default function Documents() {
     },
   });
 
-  // Load documents on component mount
+  // Load documents and folders on component mount
+  useEffect(() => {
+    if (user) {
+      loadDocuments();
+      loadFolders();
+    }
+  }, [user]);
+
+  // Reload documents when selected folder changes
   useEffect(() => {
     if (user) {
       loadDocuments();
     }
-  }, [user]);
+  }, [selectedFolderId, user]);
 
   // Auto-save every 30 seconds when editing
   useEffect(() => {
@@ -136,11 +159,32 @@ export default function Documents() {
         return;
       }
       
-      setDocuments(data || []);
+      // Filter documents by selected folder
+      let filteredDocuments = data || [];
+      if (selectedFolderId) {
+        filteredDocuments = filteredDocuments.filter(doc => doc.folder_id === selectedFolderId);
+      }
+      
+      setDocuments(filteredDocuments);
     } catch (err) {
       setError('Failed to load documents');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadFolders = async () => {
+    try {
+      const { data, error } = await getFolders();
+      
+      if (error) {
+        console.error('Failed to load folders:', error);
+        return;
+      }
+      
+      setFolders(data || []);
+    } catch (err) {
+      console.error('Failed to load folders:', err);
     }
   };
 
@@ -164,6 +208,7 @@ export default function Documents() {
       const { data: document, error } = await createDocument({
         title: newDocumentTitle.trim(),
         content,
+        folder_id: selectedFolderId,
       });
 
       if (error) {
@@ -256,27 +301,7 @@ export default function Documents() {
     }
   };
 
-  const handleSearch = async (query: string) => {
-    setSearchTerm(query);
-    
-    if (!query.trim()) {
-      loadDocuments();
-      return;
-    }
 
-    try {
-      const { data, error } = await searchDocuments(query);
-      
-      if (error) {
-        setError(error);
-        return;
-      }
-      
-      setDocuments(data || []);
-    } catch (err) {
-      setError('Failed to search documents');
-    }
-  };
 
   const handleSelectDocument = useCallback((document: Document) => {
     setSelectedDocument(document);
@@ -295,20 +320,98 @@ export default function Documents() {
     }
   };
 
+  // Folder management functions
+  const handleCreateFolder = (parentId?: string) => {
+    setFolderDialogMode('create');
+    setFolderParentId(parentId);
+    setEditingFolder(null);
+    setShowFolderDialog(true);
+  };
+
+  const handleEditFolder = (folder: FolderWithChildren) => {
+    setFolderDialogMode('edit');
+    setEditingFolder(folder);
+    setFolderParentId(undefined);
+    setShowFolderDialog(true);
+  };
+
+  const handleFolderSubmit = async (name: string, parentId?: string) => {
+    try {
+      if (folderDialogMode === 'create') {
+        const { data: folder, error } = await createFolder({ name, parent_id: parentId });
+        if (error) {
+          setError(error);
+          return;
+        }
+        if (folder) {
+          await loadFolders();
+        }
+      } else if (folderDialogMode === 'edit' && editingFolder) {
+        const { data: folder, error } = await updateFolder(editingFolder.id, { name });
+        if (error) {
+          setError(error);
+          return;
+        }
+        if (folder) {
+          await loadFolders();
+        }
+      }
+    } catch (err) {
+      setError('Failed to manage folder');
+    }
+  };
+
+  const handleDeleteFolder = async (folderId: string) => {
+    try {
+      const { error } = await deleteFolder(folderId);
+      if (error) {
+        setError(error);
+        return;
+      }
+      await loadFolders();
+      await loadDocuments();
+    } catch (err) {
+      setError('Failed to delete folder');
+    }
+  };
+
+  const handleMoveFolder = async (folderId: string, newParentId: string | null) => {
+    try {
+      const { error } = await moveFolder(folderId, newParentId);
+      if (error) {
+        setError(error);
+        return;
+      }
+      await loadFolders();
+    } catch (err) {
+      setError('Failed to move folder');
+    }
+  };
+
+  const handleSelectFolder = (folderId: string | null) => {
+    setSelectedFolderId(folderId);
+    setSelectedDocument(null);
+    setShowNewDocument(false);
+  };
+
   return (
     <div className="h-full flex">
-      {/* Left Sidebar - Document List */}
-      <DocumentList
+      {/* Left Sidebar - Unified Navigation */}
+      <UnifiedSidebar
+        folders={folders}
         documents={documents}
+        selectedFolderId={selectedFolderId}
         selectedDocument={selectedDocument}
         loading={loading}
         error={error}
-        searchTerm={searchTerm}
-        onNewDocument={handleNewDocument}
+        onSelectFolder={handleSelectFolder}
         onSelectDocument={handleSelectDocument}
+        onCreateFolder={handleCreateFolder}
+        onCreateDocument={handleNewDocument}
+        onEditFolder={handleEditFolder}
+        onDeleteFolder={handleDeleteFolder}
         onDeleteDocument={handleDeleteDocument}
-        onSearch={handleSearch}
-        onRetry={loadDocuments}
+        onMoveFolder={handleMoveFolder}
       />
 
       {/* Main Editor Area */}
@@ -402,6 +505,15 @@ export default function Documents() {
         isOpen={showImageDialog}
         onClose={() => setShowImageDialog(false)}
         onInsert={handleInsertImage}
+      />
+
+      <FolderDialog
+        isOpen={showFolderDialog}
+        onClose={() => setShowFolderDialog(false)}
+        onSubmit={handleFolderSubmit}
+        folder={editingFolder}
+        parentId={folderParentId}
+        mode={folderDialogMode}
       />
     </div>
   );

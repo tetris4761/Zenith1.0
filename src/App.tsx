@@ -5,7 +5,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Documents from './pages/Documents';
-import Review from './pages/Review';
+import Flashcards from './pages/Flashcards';
 import Tasks from './pages/Tasks';
 import Focus from './pages/Focus';
 import Calendar from './pages/Calendar';
@@ -52,7 +52,7 @@ function AppRoutes() {
       >
         <Route index element={<Dashboard />} />
         <Route path="documents" element={<Documents />} />
-        <Route path="review" element={<Review />} />
+        <Route path="flashcards" element={<Flashcards />} />
         <Route path="tasks" element={<Tasks />} />
         <Route path="focus" element={<Focus />} />
         <Route path="calendar" element={<Calendar />} />

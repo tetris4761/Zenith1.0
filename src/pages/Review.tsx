@@ -1,235 +1,290 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
+  Eye, 
+  EyeOff, 
   RotateCcw, 
-  X, 
-  Minus, 
-  Check, 
-  Plus,
-  TrendingUp,
+  BookOpen, 
+  TrendingUp, 
   Clock,
-  BookOpen
+  CheckCircle,
+  XCircle,
+  Minus,
+  Plus,
+  Star
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-
-interface Flashcard {
-  id: number;
-  front: string;
-  back: string;
-  easeFactor: number;
-  interval: number;
-  repetitions: number;
-  nextReview: string;
-}
+import { getDueFlashcards, studyFlashcard } from '../lib/flashcards';
+import type { Flashcard } from '../types';
 
 export default function Review() {
-  const [currentCardIndex, setCurrentCardIndex] = useState(0);
+  const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
-  const [reviewStats, setReviewStats] = useState({
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [sessionStats, setSessionStats] = useState({
     total: 0,
-    reviewed: 0,
-    correct: 0,
+    completed: 0,
     streak: 0,
+    correct: 0,
+    incorrect: 0,
   });
 
-  // Mock flashcards data
-  const [flashcards] = useState<Flashcard[]>([
-    {
-      id: 1,
-      front: "What is the capital of France?",
-      back: "Paris",
-      easeFactor: 2.5,
-      interval: 1,
-      repetitions: 0,
-      nextReview: "2024-04-18",
-    },
-    {
-      id: 2,
-      front: "What is the chemical symbol for gold?",
-      back: "Au",
-      easeFactor: 2.5,
-      interval: 1,
-      repetitions: 0,
-      nextReview: "2024-04-18",
-    },
-    {
-      id: 3,
-      front: "What is the largest planet in our solar system?",
-      back: "Jupiter",
-      easeFactor: 2.5,
-      interval: 1,
-      repetitions: 0,
-      nextReview: "2024-04-18",
-    },
-  ]);
+  useEffect(() => {
+    loadDueFlashcards();
+  }, []);
 
-  const currentCard = flashcards[currentCardIndex];
+  const loadDueFlashcards = async () => {
+    try {
+      setLoading(true);
+      const { data, error } = await getDueFlashcards();
+      
+      if (error) {
+        setError(error);
+        return;
+      }
 
-  const handleQualityRating = (quality: number) => {
-    // Update review stats
-    setReviewStats(prev => ({
-      ...prev,
-      reviewed: prev.reviewed + 1,
-      correct: prev.correct + (quality >= 3 ? 1 : 0),
-      streak: quality >= 3 ? prev.streak + 1 : 0,
-    }));
-
-    // Move to next card
-    if (currentCardIndex < flashcards.length - 1) {
-      setCurrentCardIndex(prev => prev + 1);
-      setShowAnswer(false);
-    } else {
-      // Review session complete
-      setReviewStats(prev => ({ ...prev, total: flashcards.length }));
+      if (data) {
+        setFlashcards(data);
+        setSessionStats(prev => ({ ...prev, total: data.length }));
+      }
+    } catch (err) {
+      setError('Failed to load flashcards');
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleFlipCard = () => {
-    setShowAnswer(!showAnswer);
+  const handleShowAnswer = () => {
+    setShowAnswer(true);
+  };
+
+  const handleQualityRating = async (quality: 1 | 2 | 3 | 4 | 5) => {
+    if (!flashcards[currentIndex]) return;
+
+    try {
+      const { error } = await studyFlashcard({
+        flashcard: flashcards[currentIndex],
+        quality,
+      });
+
+      if (error) {
+        setError(error);
+        return;
+      }
+
+      // Update session stats
+      const isCorrect = quality >= 3;
+      setSessionStats(prev => ({
+        ...prev,
+        completed: prev.completed + 1,
+        correct: prev.correct + (isCorrect ? 1 : 0),
+        incorrect: prev.incorrect + (isCorrect ? 0 : 1),
+        streak: isCorrect ? prev.streak + 1 : 0,
+      }));
+
+      // Move to next card or end session
+      if (currentIndex < flashcards.length - 1) {
+        setCurrentIndex(prev => prev + 1);
+        setShowAnswer(false);
+      } else {
+        // Session completed
+        setCurrentIndex(0);
+        setShowAnswer(false);
+        await loadDueFlashcards(); // Reload for new due cards
+      }
+    } catch (err) {
+      setError('Failed to save review');
+    }
   };
 
   const handleResetSession = () => {
-    setCurrentCardIndex(0);
+    setCurrentIndex(0);
     setShowAnswer(false);
-    setReviewStats({
-      total: 0,
-      reviewed: 0,
-      correct: 0,
-      streak: 0,
-    });
+    setSessionStats(prev => ({ ...prev, completed: 0, correct: 0, incorrect: 0, streak: 0 }));
   };
 
-  if (reviewStats.reviewed >= flashcards.length) {
+  const getQualityLabel = (quality: number) => {
+    switch (quality) {
+      case 1: return 'Again';
+      case 2: return 'Hard';
+      case 3: return 'Good';
+      case 4: return 'Easy';
+      case 5: return 'Perfect';
+      default: return '';
+    }
+  };
+
+  const getQualityColor = (quality: number) => {
+    switch (quality) {
+      case 1: return 'bg-red-500 hover:bg-red-600';
+      case 2: return 'bg-orange-500 hover:bg-orange-600';
+      case 3: return 'bg-blue-500 hover:bg-blue-600';
+      case 4: return 'bg-green-500 hover:bg-green-600';
+      case 5: return 'bg-purple-500 hover:bg-purple-600';
+      default: return 'bg-neutral-500';
+    }
+  };
+
+  if (loading) {
     return (
-      <div className="max-w-2xl mx-auto text-center py-12">
-        <div className="card">
-          <div className="text-green-600 mb-4">
-            <Check className="w-16 h-16 mx-auto" />
-          </div>
-          <h2 className="text-2xl font-bold text-neutral-900 mb-4">Review Session Complete!</h2>
-          
-          <div className="grid grid-cols-2 gap-4 mb-6">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-neutral-900">{reviewStats.correct}</div>
-              <div className="text-sm text-neutral-600">Correct</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-neutral-900">{reviewStats.streak}</div>
-              <div className="text-sm text-neutral-600">Streak</div>
-            </div>
-          </div>
-          
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
+          <p className="text-lg text-neutral-600">Loading flashcards...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center">
+          <XCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-neutral-900 mb-2">Error loading flashcards</h3>
+          <p className="text-neutral-500 mb-4">{error}</p>
           <button
-            onClick={handleResetSession}
-            className="btn-primary flex items-center space-x-2 mx-auto"
+            onClick={loadDueFlashcards}
+            className="btn-primary"
           >
-            <RotateCcw className="w-4 h-4" />
-            <span>Start New Session</span>
+            Try Again
           </button>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="max-w-4xl mx-auto">
-      {/* Header Stats */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-3xl font-bold text-neutral-900">Review Session</h1>
-          <div className="flex items-center space-x-4 text-sm text-neutral-600">
-            <div className="flex items-center space-x-2">
-              <BookOpen className="w-4 h-4" />
-              <span>{reviewStats.reviewed + 1} of {flashcards.length}</span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <TrendingUp className="w-4 h-4" />
-              <span>Streak: {reviewStats.streak}</span>
-            </div>
-          </div>
-        </div>
-        
-        {/* Progress Bar */}
-        <div className="w-full bg-neutral-200 rounded-full h-2">
-          <div 
-            className="bg-primary-600 h-2 rounded-full transition-all duration-300"
-            style={{ width: `${((reviewStats.reviewed + 1) / flashcards.length) * 100}%` }}
-          ></div>
-        </div>
-      </div>
-
-      {/* Flashcard */}
-      <div className="card max-w-2xl mx-auto">
-        <div className="text-center mb-8">
-          <div className="text-sm text-neutral-500 mb-2">
-            {showAnswer ? 'Answer' : 'Question'}
-          </div>
-          <div className="text-2xl font-medium text-neutral-900 min-h-[4rem] flex items-center justify-center">
-            {showAnswer ? currentCard.back : currentCard.front}
-          </div>
-        </div>
-
-        {!showAnswer && (
+  if (flashcards.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center">
+          <CheckCircle className="w-16 h-16 text-green-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-neutral-900 mb-2">All caught up!</h3>
+          <p className="text-neutral-500 mb-4">
+            You have no flashcards due for review right now.
+          </p>
           <button
-            onClick={handleFlipCard}
-            className="w-full btn-secondary mb-6"
+            onClick={loadDueFlashcards}
+            className="btn-primary"
           >
-            Show Answer
+            Check Again
           </button>
-        )}
+        </div>
+      </div>
+    );
+  }
 
-        {showAnswer && (
-          <div className="space-y-3">
-            <p className="text-sm text-neutral-600 text-center mb-6">
-              How well did you know this?
-            </p>
-            
-            <div className="grid grid-cols-4 gap-3">
-              <button
-                onClick={() => handleQualityRating(1)}
-                className="p-3 border border-red-200 bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition-colors duration-200"
-              >
-                <X className="w-6 h-6 mx-auto mb-1" />
-                <div className="text-xs font-medium">Again</div>
-              </button>
-              
-              <button
-                onClick={() => handleQualityRating(2)}
-                className="p-3 border border-orange-200 bg-orange-50 text-orange-700 rounded-lg hover:bg-orange-100 transition-colors duration-200"
-              >
-                <Minus className="w-6 h-6 mx-auto mb-1" />
-                <div className="text-xs font-medium">Hard</div>
-              </button>
-              
-              <button
-                onClick={() => handleQualityRating(3)}
-                className="p-3 border border-blue-200 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors duration-200"
-              >
-                <Check className="w-6 h-6 mx-auto mb-1" />
-                <div className="text-xs font-medium">Good</div>
-              </button>
-              
-              <button
-                onClick={() => handleQualityRating(4)}
-                className="p-3 border border-green-200 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors duration-200"
-              >
-                <Plus className="w-6 h-6 mx-auto mb-1" />
-                <div className="text-xs font-medium">Easy</div>
-              </button>
+  const currentCard = flashcards[currentIndex];
+
+  return (
+    <div className="h-full flex flex-col bg-gradient-to-br from-blue-50 to-indigo-100">
+      {/* Header */}
+      <div className="bg-white border-b border-neutral-200 p-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-neutral-900">Flashcard Review</h1>
+          <div className="flex items-center space-x-6">
+            <div className="flex items-center space-x-2 text-sm text-neutral-600">
+              <BookOpen className="w-4 h-4" />
+              <span>Progress: {sessionStats.completed + 1} of {sessionStats.total}</span>
+            </div>
+            <div className="flex items-center space-x-2 text-sm text-neutral-600">
+              <TrendingUp className="w-4 h-4" />
+              <span>Streak: {sessionStats.streak}</span>
+            </div>
+            <div className="flex items-center space-x-2 text-sm text-neutral-600">
+              <Clock className="w-4 h-4" />
+              <span>Due: {flashcards.length}</span>
             </div>
           </div>
-        )}
+        </div>
       </div>
 
-      {/* Session Controls */}
-      <div className="text-center mt-6">
-        <button
-          onClick={handleResetSession}
-          className="btn-secondary flex items-center space-x-2 mx-auto"
-        >
-          <RotateCcw className="w-4 h-4" />
-          <span>Reset Session</span>
-        </button>
+      {/* Main Content */}
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="w-full max-w-2xl">
+          {/* Flashcard */}
+          <div className="bg-white rounded-xl shadow-lg border border-neutral-200 p-8 mb-8">
+            <div className="text-center">
+              <div className="mb-6">
+                <h3 className="text-lg font-medium text-neutral-600 mb-2">Question:</h3>
+                <p className="text-xl text-neutral-900 leading-relaxed">{currentCard.front}</p>
+              </div>
+
+              {showAnswer && (
+                <div className="border-t border-neutral-200 pt-6">
+                  <h4 className="text-lg font-medium text-neutral-600 mb-2">Answer:</h4>
+                  <p className="text-xl text-neutral-900 leading-relaxed">{currentCard.back}</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="text-center space-y-4">
+            {!showAnswer ? (
+              <button
+                onClick={handleShowAnswer}
+                className="btn-primary text-lg px-8 py-3 flex items-center justify-center space-x-2 mx-auto"
+              >
+                <Eye className="w-5 h-5" />
+                <span>Show Answer</span>
+              </button>
+            ) : (
+              <div className="space-y-4">
+                <div className="text-sm text-neutral-600 mb-4">
+                  How well did you know this?
+                </div>
+                
+                {/* Quality Rating Buttons */}
+                <div className="flex items-center justify-center space-x-3">
+                  {[1, 2, 3, 4, 5].map((quality) => (
+                    <button
+                      key={quality}
+                      onClick={() => handleQualityRating(quality as 1 | 2 | 3 | 4 | 5)}
+                      className={cn(
+                        'px-4 py-2 rounded-lg text-white font-medium transition-colors',
+                        getQualityColor(quality)
+                      )}
+                    >
+                      {getQualityLabel(quality)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Reset Session Button */}
+            <button
+              onClick={handleResetSession}
+              className="btn-secondary text-sm px-4 py-2 flex items-center space-x-2 mx-auto"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>Reset Session</span>
+            </button>
+          </div>
+        </div>
       </div>
+
+      {/* Session Stats */}
+      {sessionStats.completed > 0 && (
+        <div className="bg-white border-t border-neutral-200 p-4">
+          <div className="flex items-center justify-center space-x-8 text-sm">
+            <div className="flex items-center space-x-2">
+              <CheckCircle className="w-4 h-4 text-green-500" />
+              <span className="text-green-600">Correct: {sessionStats.correct}</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <XCircle className="w-4 h-4 text-red-500" />
+              <span className="text-red-600">Incorrect: {sessionStats.incorrect}</span>
+            </div>
+            <div className="flex items-center space-x-2">
+              <Star className="w-4 h-4 text-yellow-500" />
+              <span className="text-yellow-600">Streak: {sessionStats.streak}</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { 
   LayoutDashboard, 
   FileText, 
-  RefreshCw, 
+  BookOpen, 
   CheckSquare, 
   Timer, 
   Calendar, 
@@ -15,7 +15,7 @@ import {
 import { cn } from '../lib/utils';
 
 // Simplified navigation type for now
-type NavigationItem = 'dashboard' | 'documents' | 'review' | 'tasks' | 'focus' | 'calendar' | 'analytics';
+type NavigationItem = 'dashboard' | 'documents' | 'flashcards' | 'tasks' | 'focus' | 'calendar' | 'analytics';
 
 interface SidebarProps {
   currentPage: NavigationItem;
@@ -25,7 +25,7 @@ interface SidebarProps {
 const navigationItems = [
   { id: 'dashboard' as NavigationItem, label: 'Dashboard', icon: LayoutDashboard },
   { id: 'documents' as NavigationItem, label: 'Documents', icon: FileText },
-  { id: 'review' as NavigationItem, label: 'Review', icon: RefreshCw },
+  { id: 'flashcards' as NavigationItem, label: 'Flashcards', icon: BookOpen },
   { id: 'tasks' as NavigationItem, label: 'Tasks', icon: CheckSquare },
   { id: 'focus' as NavigationItem, label: 'Focus', icon: Timer },
   { id: 'calendar' as NavigationItem, label: 'Calendar', icon: Calendar },
