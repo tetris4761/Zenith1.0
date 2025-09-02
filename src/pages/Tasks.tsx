@@ -32,6 +32,8 @@ import {
   getTimeOfDay,
   groupTasksByTimeOfDay
 } from '../lib/tasks';
+import SRSSuggestions from '../components/tasks/SRSSuggestions';
+import SmartSuggestions from '../components/tasks/SmartSuggestions';
 import type { Task, CreateTaskForm } from '../types';
 
 export default function Tasks() {
@@ -298,6 +300,11 @@ export default function Tasks() {
             ))}
           </nav>
         </div>
+
+        {/* SRS Suggestions */}
+        <div className="p-3 border-t border-neutral-200">
+          <SRSSuggestions onTaskCreated={loadTasks} />
+        </div>
       </div>
 
       {/* Main Content */}
@@ -324,6 +331,11 @@ export default function Tasks() {
               </button>
             </div>
           </div>
+        </div>
+
+        {/* Smart Suggestions Bar */}
+        <div className="bg-gradient-to-r from-yellow-50 to-orange-50 border-b border-yellow-200 p-4">
+          <SmartSuggestions onTaskCreated={loadTasks} />
         </div>
 
         {/* Task Lists */}
