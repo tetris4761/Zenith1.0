@@ -83,7 +83,50 @@ export interface Deck {
   updated_at: string;
 }
 
-// Task Management
+// Task Management System
+export interface Task {
+  id: string;
+  user_id: string;
+  title: string;
+  description?: string;
+  task_type: 'quick_task' | 'study_session' | 'recurring_plan';
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  
+  // Time management
+  due_date?: string;
+  estimated_duration?: number; // in minutes
+  actual_duration?: number; // in minutes
+  
+  // Context linking
+  linked_type?: 'folder' | 'document' | 'deck' | 'none';
+  linked_id?: string;
+  
+  // Recurring tasks
+  recurring_pattern?: 'daily' | 'weekly' | 'custom';
+  recurring_days?: number[]; // array of day numbers (0=Sunday, 1=Monday, etc.)
+  recurring_interval?: number; // every N days/weeks
+  
+  // Metadata
+  tags: string[];
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+export interface TaskSession {
+  id: string;
+  task_id: string;
+  user_id: string;
+  started_at: string;
+  ended_at?: string;
+  duration?: number; // in minutes
+  status: 'active' | 'completed' | 'paused' | 'cancelled';
+  notes?: string;
+}
+
+// Legacy task management (keeping for backward compatibility)
 export interface Board {
   id: string;
   name: string;
@@ -99,21 +142,6 @@ export interface Column {
   board_id: string;
   order: number;
   created_at: string;
-}
-
-export interface Task {
-  id: string;
-  title: string;
-  description?: string;
-  column_id: string;
-  user_id: string;
-  priority: 'low' | 'medium' | 'high';
-  due_date?: string;
-  highlight_id?: string;
-  document_id?: string;
-  order: number;
-  created_at: string;
-  updated_at: string;
 }
 
 // Focus Timer
@@ -185,10 +213,14 @@ export interface CreateDocumentForm {
 export interface CreateTaskForm {
   title: string;
   description?: string;
-  column_id: string;
-  priority: 'low' | 'medium' | 'high';
+  task_type: 'quick_task' | 'study_session' | 'recurring_plan';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
   due_date?: string;
-  highlight_id?: string;
+  estimated_duration?: number;
+  linked_type?: 'folder' | 'document' | 'deck' | 'none';
+  linked_id?: string;
+  tags?: string[];
+  notes?: string;
 }
 
 export interface CreateFlashcardForm {
@@ -199,7 +231,7 @@ export interface CreateFlashcardForm {
 }
 
 // Navigation
-export type NavigationItem = 'dashboard' | 'documents' | 'review' | 'tasks' | 'focus' | 'calendar' | 'analytics';
+export type NavigationItem = 'dashboard' | 'documents' | 'flashcards' | 'tasks' | 'focus' | 'calendar' | 'analytics';
 
 // Component Props
 export interface BaseComponentProps {
