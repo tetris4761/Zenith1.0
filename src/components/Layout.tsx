@@ -4,7 +4,7 @@ import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 
 // Simplified navigation type for now
-type NavigationItem = 'dashboard' | 'documents' | 'review' | 'flashcards' | 'tasks' | 'focus' | 'calendar' | 'analytics';
+type NavigationItem = 'dashboard' | 'documents' | 'flashcards' | 'tasks' | 'focus' | 'calendar' | 'analytics';
 
 export default function Layout() {
   const { user } = useAuth();

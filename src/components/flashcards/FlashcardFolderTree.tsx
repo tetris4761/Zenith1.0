@@ -137,7 +137,7 @@ function FolderItem({
           'flex items-center py-2 px-3 rounded-lg cursor-pointer transition-all duration-200 group relative',
           isSelected && 'bg-primary-50 text-primary-700 border border-primary-200',
           level > 0 && 'hover:bg-neutral-50',
-          isRoot && 'font-medium'
+          level === 0 && 'font-medium'
         )}
         style={getIndentStyle()}
         onClick={handleToggle}
