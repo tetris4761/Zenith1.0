@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { BookOpen, Plus, RefreshCw, Folder, Edit3, Trash2, FileText, X, Clock, Star } from 'lucide-react';
 import { getFlashcardFolders, createFlashcardFolder } from '../lib/flashcard-folders';
 import { createDeck, updateDeck, deleteDeck } from '../lib/decks';
@@ -7,6 +8,7 @@ import type { FlashcardFolderWithChildren } from '../lib/flashcard-folders';
 import type { Deck, Flashcard } from '../types';
 
 export default function Flashcards() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [folders, setFolders] = useState<FlashcardFolderWithChildren[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +40,32 @@ export default function Flashcards() {
     console.log('Flashcards component mounted, loading folders...');
     loadFolders();
   }, []);
+
+  // Handle URL parameters to open specific deck
+  useEffect(() => {
+    const deckId = searchParams.get('deck');
+    if (deckId && folders.length > 0) {
+      // Find the deck in all folders
+      let targetDeck: Deck | null = null;
+      let targetFolderId: string | null = null;
+      
+      for (const folder of folders) {
+        const deck = folder.decks?.find(d => d.id === deckId);
+        if (deck) {
+          targetDeck = deck;
+          targetFolderId = folder.id;
+          break;
+        }
+      }
+      
+      if (targetDeck && targetFolderId) {
+        setSelectedFolderId(targetFolderId);
+        setSelectedDeckId(deckId);
+        // Clear the URL parameter after opening
+        setSearchParams({});
+      }
+    }
+  }, [folders, searchParams, setSearchParams]);
 
   // Load flashcards when deck selection changes
   useEffect(() => {

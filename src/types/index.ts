@@ -98,9 +98,17 @@ export interface Task {
   estimated_duration?: number; // in minutes
   actual_duration?: number; // in minutes
   
-  // Context linking
+  // Context linking (legacy)
   linked_type?: 'folder' | 'document' | 'deck' | 'none';
   linked_id?: string;
+  
+  // NEW: Contextual task system
+  contextual_type?: 'generic' | 'document' | 'deck' | 'combo';
+  target_card_count?: number; // for deck-related tasks
+  flow_steps?: Array<'doc' | 'create_cards' | 'review'>; // for combo tasks
+  suggested_score?: number; // for ranking suggested tasks
+  task_source?: 'manual' | 'suggested' | 'auto'; // how task was created
+  contextual_meta?: Record<string, any>; // additional contextual data
   
   // Recurring tasks
   recurring_pattern?: 'daily' | 'weekly' | 'custom';
@@ -113,6 +121,12 @@ export interface Task {
   created_at: string;
   updated_at: string;
   completed_at?: string;
+  
+  // Joined data (from contextual queries)
+  document_title?: string;
+  document_content?: string;
+  deck_name?: string;
+  deck_description?: string;
 }
 
 export interface TaskSession {
@@ -124,6 +138,53 @@ export interface TaskSession {
   duration?: number; // in minutes
   status: 'active' | 'completed' | 'paused' | 'cancelled';
   notes?: string;
+}
+
+// NEW: Contextual Task Types
+export type ContextualTaskType = 'generic' | 'document' | 'deck' | 'combo';
+export type TaskSource = 'manual' | 'suggested' | 'auto';
+export type FlowStep = 'doc' | 'create_cards' | 'review';
+
+// NEW: Contextual Task Creation Form
+export interface CreateContextualTaskForm {
+  title?: string; // auto-generated if not provided
+  description?: string;
+  contextual_type: ContextualTaskType;
+  priority?: 'low' | 'medium' | 'high' | 'urgent';
+  due_date?: string;
+  estimated_duration?: number;
+  
+  // Context linking
+  linked_type?: 'document' | 'deck' | 'none';
+  linked_id?: string;
+  
+  // Contextual-specific fields
+  target_card_count?: number; // for deck tasks
+  flow_steps?: FlowStep[]; // for combo tasks
+  suggested_score?: number;
+  task_source?: TaskSource;
+  contextual_meta?: Record<string, any>;
+  
+  // Metadata
+  tags?: string[];
+  notes?: string;
+}
+
+// NEW: Suggested Task (from SRS/Document analysis)
+export interface SuggestedTask {
+  id: string;
+  title: string;
+  contextual_type: ContextualTaskType;
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  due_date?: string;
+  estimated_duration?: number;
+  linked_type?: 'document' | 'deck';
+  linked_id?: string;
+  target_card_count?: number;
+  suggested_score: number;
+  deck_name?: string;
+  document_title?: string;
+  reason: string; // why this task was suggested
 }
 
 // Legacy task management (keeping for backward compatibility)

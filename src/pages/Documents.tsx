@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -36,6 +37,7 @@ import UnifiedSidebar from '../components/documents/UnifiedSidebar';
 
 export default function Documents() {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [documents, setDocuments] = useState<Document[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<Document | null>(null);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
@@ -120,6 +122,19 @@ export default function Documents() {
       loadFolders();
     }
   }, [user]);
+
+  // Handle URL parameters to open specific document
+  useEffect(() => {
+    const docId = searchParams.get('doc');
+    if (docId && documents.length > 0) {
+      const document = documents.find(doc => doc.id === docId);
+      if (document) {
+        setSelectedDocument(document);
+        // Clear the URL parameter after opening
+        setSearchParams({});
+      }
+    }
+  }, [documents, searchParams, setSearchParams]);
 
   // Reload documents when selected folder changes
   useEffect(() => {

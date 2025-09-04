@@ -1,5 +1,5 @@
 import { getSupabaseClient } from './supabase';
-import type { Task, TaskSession, CreateTaskForm } from '../types';
+import type { Task, TaskSession, CreateTaskForm, CreateContextualTaskForm } from '../types';
 
 // Task CRUD Operations
 export async function createTask(taskData: CreateTaskForm) {
@@ -41,6 +41,183 @@ export async function createTask(taskData: CreateTaskForm) {
   } catch (err) {
     console.error('Exception creating task:', err);
     return { data: null, error: 'Failed to create task' };
+  }
+}
+
+// NEW: Create contextual task using the database function
+export async function createContextualTask(taskData: CreateContextualTaskForm) {
+  try {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return { data: null, error: 'Supabase not configured' };
+    }
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { data: null, error: 'User not authenticated' };
+    }
+
+    // Generate title if not provided
+    let title = taskData.title;
+    if (!title) {
+      switch (taskData.contextual_type) {
+        case 'document':
+          const doc = taskData.linked_id ? await supabase
+            .from('documents')
+            .select('title')
+            .eq('id', taskData.linked_id)
+            .single() : null;
+          title = `Study ${doc?.data?.title || 'Document'}`;
+          break;
+        case 'deck':
+          const deck = taskData.linked_id ? await supabase
+            .from('decks')
+            .select('name')
+            .eq('id', taskData.linked_id)
+            .single() : null;
+          title = `Review ${deck?.data?.name || 'Deck'} (${taskData.target_card_count || 20} cards)`;
+          break;
+        case 'combo':
+          title = 'Study Document → Review Deck';
+          break;
+        default:
+          title = 'New Task';
+      }
+    }
+
+    // Try to call the database function first
+    let data, error;
+    try {
+      const result = await supabase.rpc('create_contextual_task', {
+        p_title: title,
+        p_description: taskData.description || null,
+        p_contextual_type: taskData.contextual_type,
+        p_priority: taskData.priority || 'medium',
+        p_due_date: taskData.due_date || null,
+        p_estimated_duration: taskData.estimated_duration || null,
+        p_linked_type: taskData.linked_type || 'none',
+        p_linked_id: taskData.linked_id || null,
+        p_target_card_count: taskData.target_card_count || null,
+        p_flow_steps: taskData.flow_steps || null,
+        p_suggested_score: taskData.suggested_score || null,
+        p_task_source: taskData.task_source || 'manual',
+        p_contextual_meta: taskData.contextual_meta || null,
+        p_tags: taskData.tags || [],
+        p_notes: taskData.notes || null
+      });
+      data = result.data;
+      error = result.error;
+    } catch (rpcError) {
+      console.warn('RPC function not available, falling back to regular task creation:', rpcError);
+      // Fallback to regular task creation
+      const fallbackResult = await supabase
+        .from('tasks')
+        .insert({
+          user_id: user.id,
+          title: title,
+          description: taskData.description,
+          task_type: taskData.contextual_type === 'document' || taskData.contextual_type === 'deck' || taskData.contextual_type === 'combo' ? 'study_session' : 'quick_task',
+          priority: taskData.priority || 'medium',
+          due_date: taskData.due_date,
+          estimated_duration: taskData.estimated_duration,
+          linked_type: taskData.linked_type || 'none',
+          linked_id: taskData.linked_id,
+          tags: taskData.tags || [],
+          notes: taskData.notes,
+          // Add new contextual fields
+          contextual_type: taskData.contextual_type,
+          target_card_count: taskData.target_card_count,
+          flow_steps: taskData.flow_steps,
+          suggested_score: taskData.suggested_score,
+          task_source: taskData.task_source || 'manual',
+          contextual_meta: taskData.contextual_meta
+        })
+        .select()
+        .single();
+      
+      data = fallbackResult.data;
+      error = fallbackResult.error;
+    }
+
+    if (error) {
+      console.error('Error creating contextual task:', error);
+      return { data: null, error: error.message };
+    }
+
+    // If we used the RPC function, fetch the created task with full details
+    if (data && typeof data === 'string') {
+      // First get the task
+      const { data: task, error: taskError } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('id', data)
+        .single();
+
+      if (taskError) {
+        console.error('Error fetching created task:', taskError);
+        return { data: null, error: taskError.message };
+      }
+
+      // Then get related document/deck info if linked
+      if (task.linked_type === 'document' && task.linked_id) {
+        const { data: doc } = await supabase
+          .from('documents')
+          .select('title, content')
+          .eq('id', task.linked_id)
+          .single();
+        if (doc) {
+          task.document_title = doc.title;
+          task.document_content = doc.content;
+        }
+      }
+
+      if (task.linked_type === 'deck' && task.linked_id) {
+        const { data: deck } = await supabase
+          .from('decks')
+          .select('name, description')
+          .eq('id', task.linked_id)
+          .single();
+        if (deck) {
+          task.deck_name = deck.name;
+          task.deck_description = deck.description;
+        }
+      }
+
+      return { data: task, error: null };
+    } else {
+      // If we used the fallback method, data is already the task object
+      // But we still need to fetch related document/deck info
+      const task = data;
+      
+      if (task.linked_type === 'document' && task.linked_id) {
+        const { data: doc } = await supabase
+          .from('documents')
+          .select('title, content')
+          .eq('id', task.linked_id)
+          .single();
+        if (doc) {
+          task.document_title = doc.title;
+          task.document_content = doc.content;
+        }
+      }
+
+      if (task.linked_type === 'deck' && task.linked_id) {
+        const { data: deck } = await supabase
+          .from('decks')
+          .select('name, description')
+          .eq('id', task.linked_id)
+          .single();
+        if (deck) {
+          task.deck_name = deck.name;
+          task.deck_description = deck.description;
+        }
+      }
+
+      return { data: task, error: null };
+    }
+  } catch (err) {
+    console.error('Exception creating contextual task:', err);
+    return { data: null, error: 'Failed to create contextual task' };
   }
 }
 
