@@ -125,17 +125,46 @@ export async function getFlashcardFolders(): Promise<{ data: FlashcardFolderWith
       });
     });
 
-    // Add decks to folders and count flashcards
+    // Create a virtual "Documents" folder for root decks (decks without parent_id)
+    const rootDecks = decks.filter(deck => !deck.parent_id);
+    if (rootDecks.length > 0) {
+      const documentsFolder: FlashcardFolderWithChildren = {
+        id: 'documents-virtual',
+        name: 'Documents',
+        user_id: user.id,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        children: [],
+        decks: [],
+        deck_count: 0
+      };
+
+      rootDecks.forEach(deck => {
+        const deckWithCount: FlashcardDeck = {
+          ...deck,
+          flashcard_count: flashcardCounts?.filter(fc => fc.deck_id === deck.id).length || 0
+        };
+        documentsFolder.decks.push(deckWithCount);
+        documentsFolder.deck_count++;
+      });
+
+      rootFolders.unshift(documentsFolder); // Add at the beginning
+    }
+
+    // Add decks to folders and count flashcards (for folder-based decks)
     decks.forEach(deck => {
+      if (deck.parent_id) return; // Skip root decks, already handled above
+      
       const deckWithCount: FlashcardDeck = {
         ...deck,
         flashcard_count: flashcardCounts?.filter(fc => fc.deck_id === deck.id).length || 0
       };
 
-      if (deck.folder_id && folderMap.has(deck.folder_id)) {
-        folderMap.get(deck.folder_id)!.decks.push(deckWithCount);
-        folderMap.get(deck.folder_id)!.deck_count++;
-      }
+      // For now, we don't have folder_id in decks table, so this logic is disabled
+      // if (deck.folder_id && folderMap.has(deck.folder_id)) {
+      //   folderMap.get(deck.folder_id)!.decks.push(deckWithCount);
+      //   folderMap.get(deck.folder_id)!.deck_count++;
+      // }
     });
 
     // Build parent-child relationships

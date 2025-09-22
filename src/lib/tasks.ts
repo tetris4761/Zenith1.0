@@ -88,6 +88,24 @@ export async function createContextualTask(taskData: CreateContextualTaskForm) {
     // Try to call the database function first
     let data, error;
     try {
+      console.log('Calling create_contextual_task RPC with data:', {
+        p_title: title,
+        p_description: taskData.description || null,
+        p_contextual_type: taskData.contextual_type,
+        p_priority: taskData.priority || 'medium',
+        p_due_date: taskData.due_date || null,
+        p_estimated_duration: taskData.estimated_duration || null,
+        p_linked_type: taskData.linked_type || 'none',
+        p_linked_id: taskData.linked_id || null,
+        p_target_card_count: taskData.target_card_count || null,
+        p_flow_steps: taskData.flow_steps || null,
+        p_suggested_score: taskData.suggested_score || null,
+        p_task_source: taskData.task_source || 'manual',
+        p_contextual_meta: taskData.contextual_meta || null,
+        p_tags: taskData.tags || [],
+        p_notes: taskData.notes || null
+      });
+      
       const result = await supabase.rpc('create_contextual_task', {
         p_title: title,
         p_description: taskData.description || null,
@@ -105,11 +123,33 @@ export async function createContextualTask(taskData: CreateContextualTaskForm) {
         p_tags: taskData.tags || [],
         p_notes: taskData.notes || null
       });
+      console.log('RPC result:', result);
       data = result.data;
       error = result.error;
     } catch (rpcError) {
       console.warn('RPC function not available, falling back to regular task creation:', rpcError);
       // Fallback to regular task creation
+      console.log('Fallback task data:', {
+        user_id: user.id,
+        title: title,
+        description: taskData.description,
+        task_type: taskData.contextual_type === 'document' || taskData.contextual_type === 'deck' || taskData.contextual_type === 'combo' ? 'study_session' : 'quick_task',
+        priority: taskData.priority || 'medium',
+        due_date: taskData.due_date,
+        estimated_duration: taskData.estimated_duration,
+        linked_type: taskData.linked_type || 'none',
+        linked_id: taskData.linked_id,
+        tags: taskData.tags || [],
+        notes: taskData.notes,
+        // Add new contextual fields
+        contextual_type: taskData.contextual_type,
+        target_card_count: taskData.target_card_count,
+        flow_steps: taskData.flow_steps,
+        suggested_score: taskData.suggested_score,
+        task_source: taskData.task_source || 'manual',
+        contextual_meta: taskData.contextual_meta
+      });
+      
       const fallbackResult = await supabase
         .from('tasks')
         .insert({
@@ -135,6 +175,7 @@ export async function createContextualTask(taskData: CreateContextualTaskForm) {
         .select()
         .single();
       
+      console.log('Fallback result:', fallbackResult);
       data = fallbackResult.data;
       error = fallbackResult.error;
     }

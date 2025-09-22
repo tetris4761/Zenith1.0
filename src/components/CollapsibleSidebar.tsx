@@ -48,21 +48,21 @@ export default function CollapsibleSidebar({ activeItem, onItemClick, onToggle, 
   return (
     <div
       className={cn(
-        'fixed left-0 top-0 h-full bg-white border-r border-neutral-200 transition-all duration-300 ease-in-out z-30',
+        'fixed left-0 top-0 h-full bg-white dark:bg-neutral-900 border-r border-neutral-200 dark:border-neutral-700 transition-all duration-300 ease-in-out z-30',
         isExpanded ? 'w-48' : 'w-16'
       )}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
       {/* Sidebar Header */}
-      <div className="p-4 border-b border-neutral-200">
+      <div className="p-4 border-b border-neutral-200 dark:border-neutral-700">
         <div className="flex items-center justify-center">
           {isExpanded ? (
             <div className="flex items-center space-x-2">
               <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
                 <span className="text-white font-bold text-sm">Z</span>
               </div>
-              <span className="font-semibold text-neutral-900">Zenith</span>
+              <span className="font-semibold text-neutral-900 dark:text-neutral-100">Zenith</span>
             </div>
           ) : (
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
@@ -86,8 +86,8 @@ export default function CollapsibleSidebar({ activeItem, onItemClick, onToggle, 
                 className={cn(
                   'w-full flex items-center rounded-lg transition-all duration-200 group relative',
                   isActive 
-                    ? 'bg-blue-50 text-blue-700 border border-blue-200' 
-                    : 'text-neutral-600 hover:bg-neutral-50 hover:text-neutral-900'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800' 
+                    : 'text-neutral-600 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800 hover:text-neutral-900 dark:hover:text-neutral-100'
                 )}
               >
                 <div className={cn(

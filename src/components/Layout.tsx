@@ -24,17 +24,17 @@ export default function Layout() {
   };
 
   return (
-    <div className="flex h-screen bg-neutral-50">
+    <div className="flex h-screen bg-neutral-50 dark:bg-neutral-900">
       <CollapsibleSidebar 
         activeItem={currentPage} 
-        onItemClick={handleNavigation}
-        onToggle={handleSidebarToggle}
+        onItemClick={handleNavigation} 
+        onToggle={handleSidebarToggle} 
       />
       <div className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ease-in-out ${
         sidebarExpanded ? 'ml-48' : 'ml-16'
       }`}>
         <TopBar user={user} />
-        <main className="flex-1 overflow-y-auto bg-neutral-50">
+        <main className="flex-1 overflow-y-auto bg-neutral-50 dark:bg-neutral-900">
           <Outlet />
         </main>
       </div>

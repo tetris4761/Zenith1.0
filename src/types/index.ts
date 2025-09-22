@@ -103,7 +103,7 @@ export interface Task {
   linked_id?: string;
   
   // NEW: Contextual task system
-  contextual_type?: 'generic' | 'document' | 'deck' | 'combo';
+  contextual_type?: 'generic' | 'document' | 'deck' | 'combo' | 'multi';
   target_card_count?: number; // for deck-related tasks
   flow_steps?: Array<'doc' | 'create_cards' | 'review'>; // for combo tasks
   suggested_score?: number; // for ranking suggested tasks
@@ -141,7 +141,7 @@ export interface TaskSession {
 }
 
 // NEW: Contextual Task Types
-export type ContextualTaskType = 'generic' | 'document' | 'deck' | 'combo';
+export type ContextualTaskType = 'generic' | 'document' | 'deck' | 'combo' | 'multi';
 export type TaskSource = 'manual' | 'suggested' | 'auto';
 export type FlowStep = 'doc' | 'create_cards' | 'review';
 

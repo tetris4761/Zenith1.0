@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { BookOpen, Plus, RefreshCw, Folder, Edit3, Trash2, FileText, X, Clock, Star } from 'lucide-react';
 import { getFlashcardFolders, createFlashcardFolder } from '../lib/flashcard-folders';
@@ -31,10 +31,33 @@ export default function Flashcards() {
 
   // Review functionality
   const [showReviewMode, setShowReviewMode] = useState(false);
+  const [showReviewSettings, setShowReviewSettings] = useState(false);
   const [currentReviewIndex, setCurrentReviewIndex] = useState(0);
+  const [reviewStage, setReviewStage] = useState<'flip' | 'multiple-choice' | 'typing' | 'matching' | 'true-false'>('flip');
   const [showAnswer, setShowAnswer] = useState(false);
   const [reviewFlashcards, setReviewFlashcards] = useState<Flashcard[]>([]);
-  const [reviewResults, setReviewResults] = useState<{ [key: string]: 'easy' | 'medium' | 'hard' }>({});
+  const [reviewResults, setReviewResults] = useState<{ [key: string]: { type: 'correct' | 'wrong' | 'close', attempts: number } }>({});
+  const [multipleChoiceOptions, setMultipleChoiceOptions] = useState<string[]>([]);
+  const [selectedChoice, setSelectedChoice] = useState<string | null>(null);
+  const [typedAnswer, setTypedAnswer] = useState('');
+  const [answerFeedback, setAnswerFeedback] = useState<'correct' | 'close' | 'wrong' | null>(null);
+  const [currentRound, setCurrentRound] = useState(1);
+  const [missedCards, setMissedCards] = useState<Set<string>>(new Set());
+
+  // Review settings
+  const [reviewSettings, setReviewSettings] = useState({
+    questionTypes: ['flip', 'multiple-choice', 'typing', 'matching'] as ('flip' | 'multiple-choice' | 'typing' | 'matching' | 'true-false')[],
+    shuffle: false,
+    termFirst: true, // true = term->definition, false = definition->term
+    allowDontKnow: true,
+    sequentialMode: true // Complete all cards in one mode before moving to next
+  });
+
+  // Simplified review state
+  const [currentModeIndex, setCurrentModeIndex] = useState(0);
+  const [cardResults, setCardResults] = useState<{ [cardId: string]: { [mode: string]: 'correct' | 'wrong' | 'pending' } }>({});
+  const [currentDeck, setCurrentDeck] = useState<Flashcard[]>([]);
+  const [showFlipAnswer, setShowFlipAnswer] = useState(false);
 
   useEffect(() => {
     console.log('Flashcards component mounted, loading folders...');
@@ -87,6 +110,44 @@ export default function Flashcards() {
       setReviewResults({});
     }
   }, [showReviewMode, selectedDeckId]);
+
+  // Initialize shuffled definitions when entering matching mode
+  useEffect(() => {
+    if (reviewStage === 'matching' && reviewFlashcards.length > 0) {
+      // Use max 6 cards for better screen fit
+      const cardsToUse = reviewFlashcards.slice(0, Math.min(6, reviewFlashcards.length));
+      
+      // Create shuffled definitions (ensuring they're not in same order as terms)
+      const shuffled = cardsToUse
+        .map((card, index) => ({ card, originalIndex: index }))
+        .sort(() => Math.random() - 0.5);
+      
+      // Make sure definitions are not in the same order as terms
+      let attempts = 0;
+      while (attempts < 10) {
+        let sameOrder = true;
+        for (let i = 0; i < Math.min(3, shuffled.length); i++) {
+          if (shuffled[i].originalIndex !== i) {
+            sameOrder = false;
+            break;
+          }
+        }
+        if (!sameOrder) break;
+        shuffled.sort(() => Math.random() - 0.5);
+        attempts++;
+      }
+      
+      console.log('🎯 Matching mode initialized:', {
+        totalCards: cardsToUse.length,
+        termsOrder: cardsToUse.map((c, i) => `${String.fromCharCode(65 + i)}: ${c.front}`),
+        definitionsOrder: shuffled.map((s, i) => `${i + 1}: ${s.card.back} (original: ${s.originalIndex})`)
+      });
+      
+      setShuffledDefinitions(shuffled);
+      setSelectedTerm(null);
+      setDrawnLines([]);
+    }
+  }, [reviewStage, reviewFlashcards]);
 
   const loadFolders = async () => {
     try {
@@ -195,10 +256,14 @@ export default function Flashcards() {
     try {
       if (deckDialogMode === 'create') {
         console.log('Creating deck:', newDeckName, 'in folder:', selectedFolderId);
+        
+        // Don't set parent_id if we're in the virtual "Documents" folder
+        const parentId = selectedFolderId === 'documents-virtual' ? undefined : selectedFolderId;
+        
         const { error } = await createDeck({
           name: newDeckName.trim(),
           description: newDeckDescription.trim(),
-          folder_id: selectedFolderId || undefined
+          parent_id: parentId
         });
         
         if (error) {
@@ -356,51 +421,716 @@ export default function Flashcards() {
     }
   };
 
+  // Smart answer matching logic
+  const checkAnswerSimilarity = (userAnswer: string, correctAnswer: string): 'correct' | 'close' | 'wrong' => {
+    const normalize = (text: string) => text.toLowerCase().trim().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ');
+    const userNorm = normalize(userAnswer);
+    const correctNorm = normalize(correctAnswer);
+    
+    if (userNorm === correctNorm) return 'correct';
+    
+    // Check if it's close enough (fuzzy matching)
+    const words1 = userNorm.split(' ');
+    const words2 = correctNorm.split(' ');
+    
+    // Simple similarity check - at least 70% of words match or are similar
+    let matches = 0;
+    for (const word1 of words1) {
+      for (const word2 of words2) {
+        if (word1 === word2 || 
+            (word1.length > 3 && word2.length > 3 && 
+             (word1.includes(word2) || word2.includes(word1)))) {
+          matches++;
+          break;
+        }
+      }
+    }
+    
+    const similarity = matches / Math.max(words1.length, words2.length);
+    return similarity >= 0.7 ? 'close' : 'wrong';
+  };
+
+  // Generate multiple choice options
+  const generateMultipleChoiceOptions = (correctAnswer: string, allFlashcards: Flashcard[]): string[] => {
+    // Ensure we have a valid correct answer
+    if (!correctAnswer || correctAnswer.trim() === '') {
+      console.error('Invalid correct answer provided to generateMultipleChoiceOptions:', correctAnswer);
+      return ['Error: Invalid answer', 'Option 2', 'Option 3', 'Option 4'];
+    }
+
+    // Start with the correct answer
+    const options = [correctAnswer.trim()];
+    
+    // Get other unique answers, excluding the correct one
+    const otherAnswers = allFlashcards
+      .filter(card => card.back && card.back.trim() !== correctAnswer.trim())
+      .map(card => card.back.trim())
+      .filter((answer, index, arr) => arr.indexOf(answer) === index) // Remove duplicates
+      .sort(() => Math.random() - 0.5);
+    
+    // Add 3 random wrong answers
+    for (let i = 0; i < 3 && i < otherAnswers.length; i++) {
+      options.push(otherAnswers[i]);
+    }
+    
+    // If we don't have enough flashcards, add some generic wrong answers
+    while (options.length < 4) {
+      options.push(`Option ${options.length}`);
+    }
+    
+    // Shuffle the options but log for debugging
+    const shuffledOptions = options.sort(() => Math.random() - 0.5);
+    console.log('Generated multiple choice options:', {
+      correctAnswer: correctAnswer.trim(),
+      allOptions: shuffledOptions,
+      correctIndex: shuffledOptions.indexOf(correctAnswer.trim())
+    });
+    
+    return shuffledOptions;
+  };
+
   // Review functionality
   const startReview = () => {
     if (!selectedDeckId || flashcards.length === 0) {
       alert('Please select a deck with flashcards to review');
       return;
     }
+    
+    // Prepare flashcards based on settings
+    let cardsToReview = [...flashcards];
+    
+    // Shuffle if enabled
+    if (reviewSettings.shuffle) {
+      cardsToReview = cardsToReview.sort(() => Math.random() - 0.5);
+    }
+    
+    // Initialize simple review system
     setShowReviewMode(true);
-    setReviewFlashcards(flashcards);
+    setReviewFlashcards(cardsToReview);
+    setCurrentModeIndex(0);
+    setReviewStage(reviewSettings.questionTypes[0] || 'flip');
+    
+    // Reset all state
     setCurrentReviewIndex(0);
     setShowAnswer(false);
     setReviewResults({});
+    setSelectedChoice(null);
+    setTypedAnswer('');
+    setAnswerFeedback(null);
+    setCurrentRound(1);
+    setMissedCards(new Set());
+    setShowFlipAnswer(false);
+    
+    // Initialize card results tracking
+    const initialResults: { [cardId: string]: { [mode: string]: 'correct' | 'wrong' | 'pending' } } = {};
+    cardsToReview.forEach(card => {
+      initialResults[card.id] = {};
+      reviewSettings.questionTypes.forEach(mode => {
+        initialResults[card.id][mode] = 'pending';
+      });
+    });
+    setCardResults(initialResults);
+    
+    // Start with all cards for first mode
+    setCurrentDeck(cardsToReview);
+    
+    // Generate multiple choice options for first card if needed
+    if (cardsToReview.length > 0 && reviewSettings.questionTypes.includes('multiple-choice')) {
+      const firstCard = cardsToReview[0];
+      console.log('🎯 Initial setup - generating options for first card:', {
+        cardId: firstCard.id,
+        front: firstCard.front,
+        back: firstCard.back,
+        index: 0
+      });
+      const options = generateMultipleChoiceOptions(firstCard.back, cardsToReview);
+      setMultipleChoiceOptions(options);
+    }
+  };
+
+  const startReviewWithSettings = () => {
+    setShowReviewSettings(true);
   };
 
   const endReview = () => {
+    // Show session summary before closing
+    const totalCards = reviewFlashcards.length;
+    const correctCards = Object.values(reviewResults).filter(r => r.type === 'correct').length;
+    const wrongCards = Object.values(reviewResults).filter(r => r.type === 'wrong').length;
+    const closeCards = Object.values(reviewResults).filter(r => r.type === 'close').length;
+    const percentage = Math.round((correctCards / totalCards) * 100);
+    
+    const summary = `Session Complete! 🎉
+    
+📊 Results:
+• Total Cards: ${totalCards}
+• Correct: ${correctCards} (${percentage}%)
+• Close: ${closeCards}
+• Wrong: ${wrongCards}
+• Round: ${currentRound}
+
+${missedCards.size > 0 ? `\n📚 Cards to review: ${missedCards.size}` : '\n🎯 All cards mastered!'}`;
+
+    alert(summary);
+    
     setShowReviewMode(false);
     setCurrentReviewIndex(0);
+    setReviewStage('multiple-choice');
     setShowAnswer(false);
     setReviewResults({});
+    setSelectedChoice(null);
+    setTypedAnswer('');
+    setAnswerFeedback(null);
+    setCurrentRound(1);
+    setMissedCards(new Set());
   };
 
   const nextCard = () => {
-    if (currentReviewIndex < reviewFlashcards.length - 1) {
-      setCurrentReviewIndex(currentReviewIndex + 1);
-      setShowAnswer(false);
+    const currentMode = reviewSettings.questionTypes[currentModeIndex];
+
+    if (currentReviewIndex < currentDeck.length - 1) {
+      // Get the current card we're moving FROM
+      const currentCard = currentDeck[currentReviewIndex];
+
+      // Move to next card in current deck
+      const nextIndex = currentReviewIndex + 1;
+      const nextCard = currentDeck[nextIndex];
+
+      setCurrentReviewIndex(nextIndex);
+      resetCardState();
+
+      // Generate options for the NEW current card (the one we're moving TO)
+      if (currentMode === 'multiple-choice') {
+        console.log('🎯 Moving from card:', {
+          fromCardId: currentCard.id,
+          fromFront: currentCard.front,
+          fromBack: currentCard.back
+        });
+        console.log('🎯 Generating options for new card:', {
+          cardId: nextCard.id,
+          front: nextCard.front,
+          back: nextCard.back,
+          index: nextIndex
+        });
+        const options = generateMultipleChoiceOptions(nextCard.back, reviewFlashcards);
+        console.log('🎯 Generated options for next card:', {
+          cardId: nextCard.id,
+          correctAnswer: nextCard.back,
+          generatedOptions: options,
+          correctAnswerInOptions: options.includes(nextCard.back),
+          correctAnswerIndex: options.findIndex(opt => opt === nextCard.back)
+        });
+        setMultipleChoiceOptions(options);
+      }
     } else {
-      // Review complete
+      // End of current deck - check what to do next
+      checkModeCompletion();
+    }
+  };
+
+  const checkModeCompletion = () => {
+    const currentMode = reviewSettings.questionTypes[currentModeIndex];
+    
+    // Get all cards that still need to be retried in current mode
+    const cardsToRetry = reviewFlashcards.filter(card => 
+      cardResults[card.id]?.[currentMode] === 'wrong'
+    );
+    
+    console.log('🔍 Checking mode completion:', { 
+      mode: currentMode, 
+      cardsToRetry: cardsToRetry.length,
+      currentDeckLength: currentDeck.length,
+      allResults: cardResults
+    });
+    
+    if (cardsToRetry.length > 0) {
+      // Start retry round with only wrong cards
+      console.log('🔄 Starting retry round with', cardsToRetry.length, 'cards');
+      setCurrentDeck(cardsToRetry);
+      setCurrentReviewIndex(0);
+      resetCardState();
+      
+      // Generate options for first retry card if needed
+      if (currentMode === 'multiple-choice') {
+        const options = generateMultipleChoiceOptions(cardsToRetry[0].back, reviewFlashcards);
+        setMultipleChoiceOptions(options);
+      }
+    } else {
+      // All cards completed in current mode - move to next mode
+      console.log('✅ All cards completed in mode:', currentMode);
+      moveToNextMode();
+    }
+  };
+
+  const moveToNextMode = () => {
+    const nextModeIndex = currentModeIndex + 1;
+    
+    console.log('🎯 Moving to next mode:', { 
+      currentMode: reviewSettings.questionTypes[currentModeIndex],
+      nextModeIndex, 
+      totalModes: reviewSettings.questionTypes.length 
+    });
+    
+    if (nextModeIndex < reviewSettings.questionTypes.length) {
+      // Update all state simultaneously to prevent screen flicker
+      setCurrentModeIndex(nextModeIndex);
+      setCurrentReviewIndex(0);
+      setReviewStage(reviewSettings.questionTypes[nextModeIndex]);
+      setCurrentDeck(reviewFlashcards); // Reset to all cards for new mode
+      resetCardState();
+      
+      // Generate options for first card in new mode if needed
+      if (reviewSettings.questionTypes[nextModeIndex] === 'multiple-choice') {
+        const options = generateMultipleChoiceOptions(reviewFlashcards[0].back, reviewFlashcards);
+        setMultipleChoiceOptions(options);
+      }
+      
+      console.log('✅ Successfully moved to mode:', reviewSettings.questionTypes[nextModeIndex]);
+    } else {
+      // All modes completed
+      console.log('🎉 All modes completed, ending review');
       endReview();
+    }
+  };
+
+  const resetCardState = () => {
+    setShowAnswer(false);
+    setSelectedChoice(null);
+    setTypedAnswer('');
+    setAnswerFeedback(null);
+    setShowFlipAnswer(false);
+    setMatchingPairs({});
+    setMatchingSelections({});
+    setSelectedTerm(null);
+    setDrawnLines([]);
+    
+    // Initialize shuffled definitions for matching mode
+    if (reviewStage === 'matching') {
+      const cardsToUse = reviewFlashcards.slice(0, Math.min(6, reviewFlashcards.length));
+      const shuffled = cardsToUse
+        .map((card, index) => ({ card, originalIndex: index }))
+        .sort(() => Math.random() - 0.5);
+      setShuffledDefinitions(shuffled);
     }
   };
 
   const previousCard = () => {
     if (currentReviewIndex > 0) {
-      setCurrentReviewIndex(currentReviewIndex - 1);
+      const prevIndex = currentReviewIndex - 1;
+      const prevCard = currentDeck[prevIndex];
+
+      setCurrentReviewIndex(prevIndex);
+      setReviewStage('multiple-choice');
       setShowAnswer(false);
+      setSelectedChoice(null);
+      setTypedAnswer('');
+      setAnswerFeedback(null);
+
+      // Generate new multiple choice options
+      console.log('🎯 Previous card - generating options for:', {
+        cardId: prevCard.id,
+        front: prevCard.front,
+        back: prevCard.back,
+        index: prevIndex
+      });
+      const options = generateMultipleChoiceOptions(prevCard.back, reviewFlashcards);
+      setMultipleChoiceOptions(options);
     }
+  };
+
+  // Handle multiple choice selection
+  const handleMultipleChoiceSelect = (choice: string) => {
+    setSelectedChoice(choice);
+    const currentCard = currentDeck[currentReviewIndex];
+    const currentMode = reviewSettings.questionTypes[currentModeIndex];
+
+    // Robust comparison with trimming
+    const isCorrect = choice.trim() === currentCard.back.trim();
+
+    console.log('🎯 Multiple choice selection:', {
+      selectedChoice: choice.trim(),
+      correctAnswer: currentCard.back.trim(),
+      isCorrect,
+      cardId: currentCard.id,
+      cardFront: currentCard.front,
+      availableOptions: multipleChoiceOptions,
+      correctAnswerInOptions: multipleChoiceOptions.includes(currentCard.back.trim()),
+      correctAnswerIndex: multipleChoiceOptions.findIndex(opt => opt.trim() === currentCard.back.trim()),
+      currentReviewIndex,
+      currentDeckLength: currentDeck.length,
+      currentDeck: currentDeck.map(c => ({id: c.id, front: c.front, back: c.back})),
+      // Also check against currentReviewCard for comparison
+      currentReviewCardBack: currentReviewCard?.back || 'undefined'
+    });
+
+    // Force re-render to update UI colors immediately
+    setTimeout(() => {
+      // Trigger a re-render by updating a state variable
+      setCurrentReviewIndex(prev => prev);
+    }, 0);
+    
+    // Update card results
+    setCardResults(prev => ({
+      ...prev,
+      [currentCard.id]: {
+        ...prev[currentCard.id],
+        [currentMode]: isCorrect ? 'correct' : 'wrong'
+      }
+    }));
+    
+    // Update review results for display
+    setReviewResults(prev => ({
+      ...prev,
+      [currentCard.id]: { type: isCorrect ? 'correct' : 'wrong', attempts: (prev[currentCard.id]?.attempts || 0) + 1 }
+    }));
+    
+    if (isCorrect) {
+      // Defer deck mutation until after highlight so UI compares against correct card
+      setTimeout(() => {
+        const currentModeAfter = reviewSettings.questionTypes[currentModeIndex];
+        const newDeck = currentDeck.filter(card => card.id !== currentCard.id);
+        console.log('✅ Correct answer - removed card from deck (deferred):', {
+          cardId: currentCard.id,
+          oldDeckLength: currentDeck.length,
+          newDeckLength: newDeck.length,
+          newDeck: newDeck.map(c => c.id)
+        });
+        setCurrentDeck(newDeck);
+
+        if (newDeck.length === 0) {
+          console.log('🎉 Last card completed! Moving to next mode...');
+          moveToNextMode();
+        } else {
+          // Keep index at same position; it now points to the next card
+          const safeIndex = Math.min(currentReviewIndex, newDeck.length - 1);
+          if (safeIndex !== currentReviewIndex) {
+            setCurrentReviewIndex(safeIndex);
+          }
+          resetCardState();
+          setSelectedChoice(null);
+
+          // Regenerate options for the new current card if needed
+          if (currentModeAfter === 'multiple-choice') {
+            const nextCardBack = newDeck[safeIndex]?.back;
+            if (nextCardBack) {
+              const options = generateMultipleChoiceOptions(nextCardBack, reviewFlashcards);
+              setMultipleChoiceOptions(options);
+            }
+          }
+        }
+      }, 600);
+    } else {
+      // Wrong answer - DO NOT mutate deck yet. Show answer, then requeue on Continue.
+      setMissedCards(prev => new Set([...prev, currentCard.id]));
+      setShowAnswer(true);
+    }
+  };
+
+  // Handle typed answer submission
+  const handleTypedAnswerSubmit = () => {
+    const currentCard = currentDeck[currentReviewIndex];
+    const currentMode = reviewSettings.questionTypes[currentModeIndex];
+    const feedback = checkAnswerSimilarity(typedAnswer, currentCard.back);
+    setAnswerFeedback(feedback);
+    
+    // Update card results
+    setCardResults(prev => ({
+      ...prev,
+      [currentCard.id]: {
+        ...prev[currentCard.id],
+        [currentMode]: feedback === 'correct' ? 'correct' : 'wrong'
+      }
+    }));
+    
+    // Update results for display
+    setReviewResults(prev => ({
+      ...prev,
+      [currentCard.id]: { 
+        type: feedback, 
+        attempts: (prev[currentCard.id]?.attempts || 0) + 1 
+      }
+    }));
+    
+    if (feedback === 'wrong') {
+      // Add current card to end of deck
+      setCurrentDeck(prev => {
+        // Create new deck: remove current card and add it to the end
+        const beforeCurrent = prev.slice(0, currentReviewIndex);
+        const afterCurrent = prev.slice(currentReviewIndex + 1);
+        const newDeck = [...beforeCurrent, ...afterCurrent, currentCard];
+        
+        console.log('🔄 Typing wrong - moved card to end:', { 
+          cardId: currentCard.id, 
+          oldIndex: currentReviewIndex,
+          newDeckLength: newDeck.length,
+          newDeck: newDeck.map(c => c.id)
+        });
+        
+        return newDeck;
+      });
+      
+      setMissedCards(prev => new Set([...prev, currentCard.id]));
+    }
+    
+    if (feedback === 'correct') {
+      // Correct - move to next card after brief delay
+      setTimeout(() => {
+        nextCard();
+      }, 1500);
+    }
+    // For 'close' or 'wrong', user decides what to do next
+  };
+
+  // Handle user decision on close answer
+  const handleCloseAnswerDecision = (wasCorrect: boolean) => {
+    const currentCard = currentDeck[currentReviewIndex];
+    const currentMode = reviewSettings.questionTypes[currentModeIndex];
+    
+    if (wasCorrect) {
+      // Update card results
+      setCardResults(prev => ({
+        ...prev,
+        [currentCard.id]: {
+          ...prev[currentCard.id],
+          [currentMode]: 'correct'
+        }
+      }));
+      
+      // Update to correct
+      setReviewResults(prev => ({
+        ...prev,
+        [currentCard.id]: { ...prev[currentCard.id], type: 'correct' }
+      }));
+      
+      nextCard();
+    } else {
+      // Mark as wrong and add to end of deck
+      setCardResults(prev => ({
+        ...prev,
+        [currentCard.id]: {
+          ...prev[currentCard.id],
+          [currentMode]: 'wrong'
+        }
+      }));
+      
+      // Add current card to end of deck
+      setCurrentDeck(prev => {
+        // Create new deck: remove current card and add it to the end
+        const beforeCurrent = prev.slice(0, currentReviewIndex);
+        const afterCurrent = prev.slice(currentReviewIndex + 1);
+        const newDeck = [...beforeCurrent, ...afterCurrent, currentCard];
+        
+        console.log('🔄 Close answer wrong - moved card to end:', { 
+          cardId: currentCard.id, 
+          oldIndex: currentReviewIndex,
+          newDeckLength: newDeck.length,
+          newDeck: newDeck.map(c => c.id)
+        });
+        
+        return newDeck;
+      });
+      
+      setMissedCards(prev => new Set([...prev, currentCard.id]));
+      setReviewResults(prev => ({
+        ...prev,
+        [currentCard.id]: { ...prev[currentCard.id], type: 'wrong' }
+      }));
+      
+      // Try again - reset typing stage (stay on same card)
+      setTypedAnswer('');
+      setAnswerFeedback(null);
+    }
+  };
+
+  // Handle flip card response
+  const handleFlipResponse = (response: 'correct' | 'wrong') => {
+    const currentCard = currentDeck[currentReviewIndex];
+    const currentMode = reviewSettings.questionTypes[currentModeIndex];
+    
+    // Update card results
+    setCardResults(prev => ({
+      ...prev,
+      [currentCard.id]: {
+        ...prev[currentCard.id],
+        [currentMode]: response
+      }
+    }));
+    
+    // Track results for display
+    setReviewResults(prev => ({
+      ...prev,
+      [currentCard.id]: { 
+        type: response, 
+        attempts: (prev[currentCard.id]?.attempts || 0) + 1 
+      }
+    }));
+    
+    if (response === 'wrong') {
+      // Add current card to end of deck
+      setCurrentDeck(prev => {
+        // Create new deck: remove current card and add it to the end
+        const beforeCurrent = prev.slice(0, currentReviewIndex);
+        const afterCurrent = prev.slice(currentReviewIndex + 1);
+        const newDeck = [...beforeCurrent, ...afterCurrent, currentCard];
+        
+        console.log('🔄 Flip wrong - moved card to end:', { 
+          cardId: currentCard.id, 
+          oldIndex: currentReviewIndex,
+          newDeckLength: newDeck.length,
+          newDeck: newDeck.map(c => c.id)
+        });
+        
+        return newDeck;
+      });
+      
+      setMissedCards(prev => new Set([...prev, currentCard.id]));
+    }
+    
+    // Reset flip state
+    setShowFlipAnswer(false);
+    
+    if (response === 'correct') {
+      // Remove card from current deck
+      setCurrentDeck(prev => {
+        const newDeck = prev.filter(card => card.id !== currentCard.id);
+        console.log('✅ Flip correct - removed card from deck:', { 
+          cardId: currentCard.id, 
+          oldDeckLength: prev.length,
+          newDeckLength: newDeck.length,
+          newDeck: newDeck.map(c => c.id)
+        });
+        return newDeck;
+      });
+      
+      setTimeout(() => {
+        // Check if deck is now empty after removing this card
+        if (currentDeck.length === 1) {
+          // This was the last card - move to next mode
+          console.log('🎉 Last card completed! Moving to next mode...');
+          moveToNextMode();
+        } else if (currentReviewIndex >= currentDeck.length - 1) {
+          // Index beyond new deck - reset to last card
+          setCurrentReviewIndex(currentDeck.length - 2); // -2 because we removed one card
+          resetCardState();
+        } else {
+          // Continue with same index (now points to next card)
+          resetCardState();
+        }
+      }, 500);
+    } else {
+      // For wrong answers, don't remove card - just reset state
+      setTimeout(() => {
+        resetCardState();
+        // Generate options for the card that's now at current index
+        const currentMode = reviewSettings.questionTypes[currentModeIndex];
+        if (currentMode === 'multiple-choice' && currentDeck[currentReviewIndex]) {
+          const options = generateMultipleChoiceOptions(currentDeck[currentReviewIndex].back, reviewFlashcards);
+          setMultipleChoiceOptions(options);
+        }
+      }, 500);
+    }
+  };
+
+  // Matching mode state and handlers
+  const [matchingSelections, setMatchingSelections] = useState<{question?: number, answer?: number}>({});
+  const [matchingPairs, setMatchingPairs] = useState<{[key: number]: number}>({});
+  const [selectedTerm, setSelectedTerm] = useState<number | null>(null);
+  const [drawnLines, setDrawnLines] = useState<{from: number, to: number, correct: boolean, id: string}[]>([]);
+  const [shuffledDefinitions, setShuffledDefinitions] = useState<{card: Flashcard, originalIndex: number}[]>([]);
+
+  const handleLineDrawingClick = (type: 'term' | 'definition', index: number) => {
+    if (type === 'term') {
+      // Clicking a term - select it
+      setSelectedTerm(selectedTerm === index ? null : index);
+    } else if (type === 'definition' && selectedTerm !== null) {
+      // Clicking a definition with a term selected - draw line
+      const lineId = `${selectedTerm}-${index}`;
+      const isCorrect = selectedTerm === index; // Correct if indices match
+      
+      // Check if line already exists
+      const existingLineIndex = drawnLines.findIndex(line => line.from === selectedTerm);
+      if (existingLineIndex >= 0) {
+        // Replace existing line from this term
+        setDrawnLines(prev => prev.map((line, i) => 
+          i === existingLineIndex 
+            ? { from: selectedTerm, to: index, correct: isCorrect, id: lineId }
+            : line
+        ));
+      } else {
+        // Add new line
+        setDrawnLines(prev => [...prev, { from: selectedTerm, to: index, correct: isCorrect, id: lineId }]);
+      }
+      
+      if (!isCorrect) {
+        // Wrong match - flash red and remove after delay
+        setTimeout(() => {
+          setDrawnLines(prev => prev.filter(line => line.id !== lineId));
+        }, 1000);
+      }
+      
+      setSelectedTerm(null);
+      
+      // Check if all correct matches are made
+      const totalCards = shuffledDefinitions.length;
+      const correctLines = drawnLines.filter(line => line.correct).length + (isCorrect ? 1 : 0);
+      
+      if (correctLines === totalCards) {
+        // All matched correctly!
+        setTimeout(() => {
+          handleMatchingComplete();
+        }, 1500);
+      }
+    }
+  };
+
+  const handleMatchingComplete = () => {
+    // Calculate score based on correct matches
+    const currentCards = reviewFlashcards.slice(currentReviewIndex, Math.min(currentReviewIndex + 4, reviewFlashcards.length));
+    let correctMatches = 0;
+    
+    Object.entries(matchingPairs).forEach(([questionIndex, answerIndex]) => {
+      if (parseInt(questionIndex) === answerIndex) {
+        correctMatches++;
+      }
+    });
+    
+    const accuracy = correctMatches / currentCards.length;
+    const currentCard = reviewFlashcards[currentReviewIndex];
+    
+    // Track results
+    setReviewResults(prev => ({
+      ...prev,
+      [currentCard.id]: { 
+        type: accuracy >= 0.75 ? 'correct' : accuracy >= 0.5 ? 'close' : 'wrong', 
+        attempts: (prev[currentCard.id]?.attempts || 0) + 1 
+      }
+    }));
+    
+    if (accuracy < 0.75) {
+      setMissedCards(prev => new Set([...prev, currentCard.id]));
+    }
+    
+    // Reset matching state and move to next
+    setMatchingPairs({});
+    setMatchingSelections({});
+    
+    setTimeout(() => {
+      nextCard();
+    }, 1000);
   };
 
   const handleReviewResponse = async (difficulty: 'easy' | 'medium' | 'hard') => {
     const currentCard = reviewFlashcards[currentReviewIndex];
     if (!currentCard) return;
 
-    // Update review results
+    // Update review results - convert difficulty to proper format
+    const resultType = difficulty === 'easy' ? 'correct' : difficulty === 'medium' ? 'close' : 'wrong';
     setReviewResults(prev => ({
       ...prev,
-      [currentCard.id]: difficulty
+      [currentCard.id]: { 
+        type: resultType, 
+        attempts: (prev[currentCard.id]?.attempts || 0) + 1 
+      }
     }));
 
     // TODO: Update spaced repetition data in database
@@ -417,7 +1147,9 @@ export default function Flashcards() {
     ? selectedFolder?.decks.find(d => d.id === selectedDeckId)
     : null;
 
-  const currentReviewCard = reviewFlashcards[currentReviewIndex];
+  const currentReviewCard = React.useMemo(() => {
+    return currentDeck[currentReviewIndex];
+  }, [currentDeck, currentReviewIndex]);
 
   if (loading) {
     return (
@@ -808,167 +1540,713 @@ export default function Flashcards() {
         </div>
       </div>
 
-      {/* Review Button */}
+      {/* Review Buttons */}
+      <div className="fixed bottom-6 right-6 flex flex-col space-y-3">
+        <button
+          onClick={startReviewWithSettings}
+          disabled={!selectedDeckId || flashcards.length === 0}
+          className={`p-3 rounded-full shadow-lg transition-all duration-200 flex items-center space-x-2 ${
+            !selectedDeckId || flashcards.length === 0
+              ? 'bg-neutral-400 cursor-not-allowed'
+              : 'bg-indigo-600 hover:bg-indigo-700 text-white hover:scale-105'
+          }`}
+          title="Review with Settings"
+        >
+          <Star className="w-5 h-5" />
+        </button>
+        
       <button
         onClick={startReview}
         disabled={!selectedDeckId || flashcards.length === 0}
-        className={`fixed bottom-6 right-6 p-4 rounded-full shadow-lg transition-all duration-200 flex items-center space-x-2 ${
+          className={`p-4 rounded-full shadow-lg transition-all duration-200 flex items-center space-x-2 ${
           !selectedDeckId || flashcards.length === 0
             ? 'bg-neutral-400 cursor-not-allowed'
-            : 'bg-primary-600 hover:bg-primary-700 text-white hover:scale-105'
+              : 'bg-blue-600 hover:bg-blue-700 text-white hover:scale-105'
         }`}
         title={!selectedDeckId || flashcards.length === 0 
           ? 'Select a deck with flashcards to review' 
-          : 'Start Review Session'
+            : 'Quick Review'
         }
       >
         <RefreshCw className="w-5 h-5" />
         <span className="hidden sm:inline">Review</span>
       </button>
+      </div>
 
-      {/* Review Mode Overlay */}
-      {showReviewMode && currentReviewCard && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-hidden">
-            {/* Review Header */}
-            <div className="bg-gradient-to-r from-primary-600 to-primary-700 text-white p-4 flex items-center justify-between">
+      {/* Review Mode Overlay - Full Screen */}
+      {showReviewMode && reviewFlashcards.length > 0 && (
+        <div className="fixed inset-0 bg-gradient-to-br from-blue-50 to-indigo-100 z-50 flex flex-col">
+          {/* Review Header - Compact */}
+          <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-4 flex items-center justify-between shadow-lg">
               <div className="flex items-center space-x-3">
                 <BookOpen className="w-6 h-6" />
                 <div>
-                  <h3 className="text-lg font-semibold">Review Session</h3>
-                  <p className="text-primary-100 text-sm">
-                    {selectedDeck?.name} • Card {currentReviewIndex + 1} of {reviewFlashcards.length}
+                <h3 className="text-lg font-bold">Review Session</h3>
+                <p className="text-blue-100 text-sm">
+                  {selectedDeck?.name} • Card {currentReviewIndex + 1}/{currentDeck.length}
+                </p>
+                <p className="text-blue-200 text-xs">
+                  Mode: {reviewStage.charAt(0).toUpperCase() + reviewStage.slice(1).replace('-', ' ')} • 
+                  Stage {currentModeIndex + 1}/{reviewSettings.questionTypes.length}
                   </p>
                 </div>
               </div>
               <button
                 onClick={endReview}
-                className="p-2 hover:bg-primary-500 rounded-lg transition-colors"
+              className="p-2 hover:bg-blue-500 rounded-lg transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             {/* Progress Bar */}
-            <div className="bg-neutral-100 h-2">
+          <div className="bg-neutral-200 h-3">
               <div 
-                className="bg-primary-500 h-full transition-all duration-300 ease-out"
+              className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full transition-all duration-500 ease-out"
                 style={{ width: `${((currentReviewIndex + 1) / reviewFlashcards.length) * 100}%` }}
               />
             </div>
 
-            {/* Flashcard Content */}
-            <div className="p-8">
-              {/* Question (Front) */}
-              <div className="mb-8">
-                <div className="flex items-center space-x-2 mb-3">
-                  <span className="text-sm font-medium text-neutral-500 uppercase tracking-wide">Question</span>
-                  <div className="flex items-center space-x-1">
-                    <Clock className="w-4 h-4 text-neutral-400" />
-                    <span className="text-xs text-neutral-500">Take your time</span>
+          {/* Main Content Area - Optimized Layout */}
+          <div className="flex-1 flex flex-col justify-center p-6 min-h-0">
+            {currentReviewCard ? (
+            <div className="w-full max-w-4xl mx-auto space-y-6">
+              {/* Question (Front) - Compact */}
+              <div className="bg-white rounded-xl shadow-lg p-6">
+                <div className="flex items-center justify-center space-x-2 mb-4">
+                  <span className="text-base font-bold text-blue-600 uppercase tracking-wide">Question</span>
+                  <Clock className="w-4 h-4 text-blue-400" />
                   </div>
+                <div className="text-center">
+                  <p className="text-xl text-neutral-900 leading-relaxed font-medium">
+                    {currentReviewCard.front}
+                  </p>
                 </div>
-                <div className="bg-neutral-50 p-6 rounded-lg border-2 border-neutral-200 min-h-[120px] flex items-center">
-                  <p className="text-lg text-neutral-900 leading-relaxed">{currentReviewCard.front}</p>
                 </div>
+
+              {/* Stage 1: Flip Card Mode */}
+              {reviewStage === 'flip' && (
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <div className="text-center space-y-6">
+                    <div className="bg-blue-50 rounded-lg p-8 min-h-[200px] flex items-center justify-center cursor-pointer transition-all duration-300 hover:bg-blue-100"
+                         onClick={() => setShowFlipAnswer(!showFlipAnswer)}>
+                      {!showFlipAnswer ? (
+                        <div>
+                          <p className="text-lg font-medium text-blue-700 mb-2">Click to reveal answer</p>
+                          <p className="text-sm text-blue-600">👆 Tap the card</p>
+                        </div>
+                      ) : (
+                        <div>
+                          <div className="text-sm font-medium text-green-600 mb-3">Answer:</div>
+                          <p className="text-xl text-green-800 font-medium leading-relaxed">
+                            {currentReviewCard.back}
+                          </p>
+                        </div>
+                      )}
               </div>
 
-              {/* Answer (Back) - Initially Hidden */}
-              {!showAnswer ? (
-                <div className="text-center mb-8">
+                    {showFlipAnswer && (
+                      <div className="flex justify-center space-x-4">
                   <button
-                    onClick={() => setShowAnswer(true)}
-                    className="btn-primary px-8 py-3 text-lg"
-                  >
-                    Show Answer
+                          onClick={() => handleFlipResponse('wrong')}
+                          className="px-6 py-3 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors flex items-center space-x-2"
+                        >
+                          <span>❌</span>
+                          <span>Didn't Know</span>
+                        </button>
+                        <button
+                          onClick={() => handleFlipResponse('correct')}
+                          className="px-6 py-3 bg-green-500 hover:bg-green-600 text-white rounded-lg font-medium transition-colors flex items-center space-x-2"
+                        >
+                          <span>✅</span>
+                          <span>I Knew It</span>
                   </button>
                 </div>
-              ) : (
-                <div className="mb-8">
-                  <div className="flex items-center space-x-2 mb-3">
-                    <span className="text-sm font-medium text-neutral-500 uppercase tracking-wide">Answer</span>
-                    <Star className="w-4 h-4 text-yellow-500" />
-                  </div>
-                  <div className="bg-green-50 p-6 rounded-lg border-2 border-green-200 min-h-[120px] flex items-center">
-                    <p className="text-lg text-neutral-900 leading-relaxed">{currentReviewCard.back}</p>
+                    )}
                   </div>
                 </div>
               )}
 
-              {/* Difficulty Buttons - Only shown after answer is revealed */}
-              {showAnswer && (
+              {/* Stage 2: Multiple Choice - Compact */}
+              {reviewStage === 'multiple-choice' && (
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <h4 className="text-lg font-semibold text-neutral-700 mb-4 text-center">Choose the correct answer:</h4>
+                  <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        {multipleChoiceOptions.map((option, index) => {
+                          const isOptionCorrect = option.trim() === currentReviewCard.back.trim();
+                          const isSelected = selectedChoice === option;
+
+                          console.log(`🎨 Option ${index + 1} rendering:`, {
+                            option: option.trim(),
+                            currentCardAnswer: currentReviewCard.back.trim(),
+                            isOptionCorrect,
+                            isSelected,
+                            optionClass: isSelected ? (isOptionCorrect ? 'correct' : 'wrong') : (selectedChoice !== null ? (isOptionCorrect ? 'correct-dim' : 'wrong-dim') : 'normal')
+                          });
+
+                          return (
+                            <button
+                              key={index}
+                              onClick={() => handleMultipleChoiceSelect(option)}
+                              disabled={selectedChoice !== null}
+                              className={`p-3 rounded-lg border-2 transition-all duration-200 text-left text-sm ${
+                                isSelected
+                                  ? isOptionCorrect
+                                    ? 'bg-green-100 border-green-400 text-green-800'
+                                    : 'bg-red-100 border-red-400 text-red-800'
+                                  : selectedChoice !== null
+                                  ? isOptionCorrect
+                                    ? 'bg-green-50 border-green-300 text-green-700'
+                                    : 'bg-neutral-100 border-neutral-300 text-neutral-500'
+                                  : 'bg-white border-neutral-200 hover:border-blue-300 hover:bg-blue-50 text-neutral-800'
+                              }`}
+                            >
+                            <div className="flex items-start space-x-2">
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0 mt-0.5 ${
+                                isSelected
+                                  ? isOptionCorrect
+                                    ? 'bg-green-200 text-green-800'
+                                    : 'bg-red-200 text-red-800'
+                                  : 'bg-neutral-200 text-neutral-600'
+                              }`}>
+                                {String.fromCharCode(65 + index)}
+                              </div>
+                              <span className="flex-1 leading-snug">{option}</span>
+                              <span className="text-xs text-neutral-400 ml-1 opacity-0 group-hover:opacity-100">
+                                {index + 1}
+                              </span>
+                            </div>
+                          </button>
+                          );
+                        })}
+                    </div>
+                    
+                    {/* Don't Know Button */}
+                    {reviewSettings.allowDontKnow && selectedChoice === null && (
+                      <div className="text-center">
+                    <button
+                          onClick={() => {
+                            setShowAnswer(true);
+                            setMissedCards(prev => new Set([...prev, currentReviewCard.id]));
+                            setTimeout(() => {
+                              setReviewStage('typing');
+                              setShowAnswer(false);
+                            }, 2000);
+                          }}
+                          className="px-4 py-2 bg-neutral-500 hover:bg-neutral-600 text-white rounded-lg text-sm transition-colors"
+                        >
+                          🤷‍♂️ Don't Know
+                  </button>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Show correct answer if wrong choice - Inline */}
+                  {selectedChoice && selectedChoice !== currentReviewCard.back && showAnswer && (
+                    <div className="mt-4 space-y-3">
+                      <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                        <div className="text-center">
+                          <span className="text-green-800 font-medium text-sm">Correct Answer: </span>
+                          <span className="text-green-700 text-sm font-medium">{currentReviewCard.back}</span>
+                        </div>
+                      </div>
+                      <div className="text-center">
+                        <button
+                          onClick={() => {
+                            // Requeue wrong card to the end now (after user had time to see)
+                            const wrongCard = currentDeck[currentReviewIndex];
+                            const beforeCurrent = currentDeck.slice(0, currentReviewIndex);
+                            const afterCurrent = currentDeck.slice(currentReviewIndex + 1);
+                            const newDeck = [...beforeCurrent, ...afterCurrent, wrongCard];
+                            console.log('🔄 Continue → requeue wrong card to end (deferred):', {
+                              cardId: wrongCard.id,
+                              oldIndex: currentReviewIndex,
+                              newDeckLength: newDeck.length,
+                              newDeck: newDeck.map(c => c.id)
+                            });
+                            setCurrentDeck(newDeck);
+
+                            // Keep index at same position to show the next card in order
+                            const safeIndex = Math.min(currentReviewIndex, newDeck.length - 1);
+                            if (safeIndex !== currentReviewIndex) {
+                              setCurrentReviewIndex(safeIndex);
+                            }
+
+                            setSelectedChoice(null);
+                            setShowAnswer(false);
+                            resetCardState();
+
+                            // Generate options for the card that's now at current index
+                            const currentMode = reviewSettings.questionTypes[currentModeIndex];
+                            if (currentMode === 'multiple-choice' && newDeck[safeIndex]) {
+                              const options = generateMultipleChoiceOptions(newDeck[safeIndex].back, reviewFlashcards);
+                              setMultipleChoiceOptions(options);
+                            }
+                          }}
+                          className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+                        >
+                          Continue →
+                    </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Stage 2: Matching Mode - Clean Pairing */}
+              {reviewStage === 'matching' && (
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  {/* Header */}
+                  <div className="text-center mb-6">
+                    <h4 className="text-xl font-bold text-neutral-800 mb-2">Match the Pairs</h4>
+                    <p className="text-neutral-600 mb-3">
+                      Click a term, then click its matching definition
+                    </p>
+                    <div className="inline-flex items-center px-3 py-1 bg-green-50 rounded-full border border-green-200">
+                      <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
+                      <span className="text-sm font-medium text-green-700">
+                        {drawnLines.filter(line => line.correct).length} / {shuffledDefinitions.length} matched
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-8">
+                    {/* Top Row - Terms */}
+                    <div>
+                      <div className="text-center mb-4">
+                        <span className="inline-block px-4 py-2 bg-blue-50 text-blue-700 rounded-lg font-medium text-sm">
+                          📚 Terms
+                        </span>
+                      </div>
+                      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.min(shuffledDefinitions.length, 6)}, 1fr)` }}>
+                        {shuffledDefinitions.slice(0, 6).map((_, index) => {
+                          const card = reviewFlashcards[index];
+                          if (!card) return null;
+                          
+                          const isSelected = selectedTerm === index;
+                          const isMatched = drawnLines.some(line => line.from === index && line.correct);
+                          
+                          return (
+                            <div
+                              key={`term-${index}`}
+                              className={`relative p-4 rounded-lg cursor-pointer transition-all duration-200 border-2 text-center ${
+                                isSelected 
+                                  ? 'bg-blue-500 text-white border-blue-600 shadow-lg scale-105' 
+                                  : isMatched
+                                  ? 'bg-green-500 text-white border-green-600 shadow-md'
+                                  : 'bg-white border-neutral-200 hover:border-blue-300 hover:bg-blue-50'
+                              }`}
+                              onClick={() => handleLineDrawingClick('term', index)}
+                            >
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold mx-auto mb-2 ${
+                                isSelected ? 'bg-white/20 text-white' :
+                                isMatched ? 'bg-white/20 text-white' :
+                                'bg-blue-100 text-blue-700'
+                              }`}>
+                                {String.fromCharCode(65 + index)}
+                              </div>
+                              <span className="text-sm font-medium leading-tight">
+                                {card.front.length > 30 ? card.front.substring(0, 30) + '...' : card.front}
+                              </span>
+                              {isSelected && (
+                                <div className="absolute -top-1 -right-1 w-4 h-4 bg-yellow-400 rounded-full animate-pulse"></div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    
+                    {/* Bottom Row - Definitions (Shuffled) */}
+                    <div>
+                      <div className="text-center mb-4">
+                        <span className="inline-block px-4 py-2 bg-purple-50 text-purple-700 rounded-lg font-medium text-sm">
+                          💡 Definitions
+                        </span>
+                      </div>
+                      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.min(shuffledDefinitions.length, 6)}, 1fr)` }}>
+                        {shuffledDefinitions.slice(0, 6).map((item, shuffledIndex) => {
+                          const isMatched = drawnLines.some(line => line.to === item.originalIndex && line.correct);
+                          const canSelect = selectedTerm !== null && !isMatched;
+                          
+                          return (
+                            <div
+                              key={`def-${item.originalIndex}`}
+                              className={`relative p-4 rounded-lg cursor-pointer transition-all duration-200 border-2 text-center ${
+                                canSelect
+                                  ? 'bg-yellow-50 border-yellow-300 hover:bg-yellow-100 hover:border-yellow-400 hover:scale-102'
+                                  : isMatched
+                                  ? 'bg-green-500 text-white border-green-600 shadow-md'
+                                  : 'bg-white border-neutral-200 hover:border-purple-300 hover:bg-purple-50'
+                              }`}
+                              onClick={() => handleLineDrawingClick('definition', item.originalIndex)}
+                            >
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold mx-auto mb-2 ${
+                                isMatched ? 'bg-white/20 text-white' :
+                                canSelect ? 'bg-yellow-200 text-yellow-800' :
+                                'bg-purple-100 text-purple-700'
+                              }`}>
+                                {shuffledIndex + 1}
+                              </div>
+                              <span className="text-sm font-medium leading-tight">
+                                {item.card.back.length > 30 ? item.card.back.substring(0, 30) + '...' : item.card.back}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Instructions and Controls */}
+                  <div className="mt-6 flex justify-between items-center bg-neutral-50 rounded-lg p-3">
+                    <div className="text-sm text-neutral-600">
+                      {selectedTerm !== null ? 
+                        `Term ${String.fromCharCode(65 + selectedTerm)} selected - click a definition` : 
+                        'Click any term to start matching'
+                      }
+                    </div>
+                    <button
+                      onClick={() => {
+                        setDrawnLines([]);
+                        setSelectedTerm(null);
+                      }}
+                      className="px-3 py-1 bg-neutral-200 hover:bg-neutral-300 text-neutral-700 rounded text-sm transition-colors"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Stage 3: Type Answer - Compact */}
+              {reviewStage === 'typing' && (
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                  <h4 className="text-lg font-semibold text-neutral-700 mb-4 text-center">Now type the answer:</h4>
+                  
                 <div className="space-y-4">
-                  <p className="text-center text-sm text-neutral-600 mb-4">
-                    How well did you know this?
-                  </p>
-                  <div className="grid grid-cols-3 gap-4">
-                    <button
-                      onClick={() => handleReviewResponse('hard')}
-                      className="flex flex-col items-center p-4 bg-red-50 hover:bg-red-100 border-2 border-red-200 hover:border-red-300 rounded-lg transition-colors group"
-                    >
-                      <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center mb-2 group-hover:bg-red-200 transition-colors">
-                        <span className="text-red-600 font-bold text-sm">1</span>
-                      </div>
-                      <span className="text-sm font-medium text-red-700">Hard</span>
-                      <span className="text-xs text-red-600">Review soon</span>
-                    </button>
+                    <textarea
+                      value={typedAnswer}
+                      onChange={(e) => setTypedAnswer(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && !answerFeedback && handleTypedAnswerSubmit()}
+                      placeholder="Type your answer here..."
+                      className={`w-full p-3 border-2 rounded-lg focus:border-blue-500 focus:outline-none text-base h-20 resize-none ${
+                        answerFeedback ? 'border-neutral-200 bg-neutral-50 text-neutral-500' : 'border-neutral-300'
+                      }`}
+                      autoFocus
+                      disabled={!!answerFeedback}
+                    />
                     
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-neutral-500">
+                        {answerFeedback ? 'Answer submitted' : 'Press Enter to submit'}
+                      </p>
                     <button
-                      onClick={() => handleReviewResponse('medium')}
-                      className="flex flex-col items-center p-4 bg-yellow-50 hover:bg-yellow-100 border-2 border-yellow-200 hover:border-yellow-300 rounded-lg transition-colors group"
-                    >
-                      <div className="w-8 h-8 bg-yellow-100 rounded-full flex items-center justify-center mb-2 group-hover:bg-red-200 transition-colors">
-                        <span className="text-red-600 font-bold text-sm">2</span>
-                      </div>
-                      <span className="text-sm font-medium text-yellow-700">Medium</span>
-                      <span className="text-xs text-yellow-600">Review later</span>
+                        onClick={handleTypedAnswerSubmit}
+                        disabled={!typedAnswer.trim() || !!answerFeedback}
+                        className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
+                      >
+                        Submit
                     </button>
-                    
+                  </div>
+
+                    {/* Answer Feedback - Compact */}
+                    {answerFeedback && (
+                      <div className={`p-4 rounded-lg border-2 ${
+                        answerFeedback === 'correct' 
+                          ? 'bg-green-50 border-green-300'
+                          : answerFeedback === 'close'
+                          ? 'bg-yellow-50 border-yellow-300'
+                          : 'bg-red-50 border-red-300'
+                      }`}>
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className={`font-bold ${
+                              answerFeedback === 'correct' ? 'text-green-700' :
+                              answerFeedback === 'close' ? 'text-yellow-700' : 'text-red-700'
+                            }`}>
+                              {answerFeedback === 'correct' ? '✅ Correct!' :
+                               answerFeedback === 'close' ? '🟡 Close!' : '❌ Not quite'}
+                            </div>
+                            <div className="text-neutral-700 text-sm">
+                              <span className="font-medium">Answer: </span>
+                              <span>{currentReviewCard.back}</span>
+                            </div>
+                          </div>
+
+                          {answerFeedback === 'close' && (
+                            <div className="flex space-x-3 justify-center">
                     <button
-                      onClick={() => handleReviewResponse('easy')}
-                      className="flex flex-col items-center p-4 bg-green-50 hover:bg-green-100 border-2 border-green-200 hover:border-green-300 rounded-lg transition-colors group"
-                    >
-                      <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center mb-2 group-hover:bg-green-200 transition-colors">
-                        <span className="text-green-600 font-bold text-sm">3</span>
-                      </div>
-                      <span className="text-sm font-medium text-green-700">Easy</span>
-                      <span className="text-xs text-green-600">Review much later</span>
+                                onClick={() => handleCloseAnswerDecision(true)}
+                                className="px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-sm transition-colors"
+                              >
+                                ✓ Close enough
                     </button>
+                    <button
+                                onClick={() => handleCloseAnswerDecision(false)}
+                                className="px-4 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white rounded text-sm transition-colors"
+                    >
+                                ↻ Try again
+                              </button>
+                </div>
+              )}
+
+                          {answerFeedback === 'wrong' && (
+                            <div className="text-center">
+                              <button
+                                onClick={() => handleCloseAnswerDecision(false)}
+                                className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-sm transition-colors"
+                              >
+                                ↻ Try Again
+                    </button>
+            </div>
+                          )}
+
+                          {answerFeedback === 'correct' && (
+                            <div className="text-green-700 font-medium text-center text-sm">
+                              Moving to next card...
+                </div>
+              )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
             </div>
+            ) : (
+              <div className="w-full max-w-4xl mx-auto flex items-center justify-center">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                  <p className="text-neutral-600">Loading next question...</p>
+                </div>
+              </div>
+            )}
+          </div>
 
-            {/* Navigation Footer */}
-            <div className="bg-neutral-50 px-6 py-4 flex items-center justify-between">
+          {/* Navigation Footer - Compact */}
+          <div className="bg-white border-t border-neutral-200 px-6 py-4 flex items-center justify-between shadow-lg">
               <button
                 onClick={previousCard}
                 disabled={currentReviewIndex === 0}
-                className={`px-4 py-2 rounded-lg transition-colors ${
+              className={`px-4 py-2 rounded-lg transition-colors text-sm ${
                   currentReviewIndex === 0
                     ? 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
-                    : 'bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-200'
+                  : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700 border border-neutral-300'
                 }`}
               >
-                Previous
+              ← Previous
               </button>
               
-              <div className="flex items-center space-x-2">
-                <span className="text-sm text-neutral-600">
-                  {currentReviewIndex + 1} of {reviewFlashcards.length}
+            <div className="flex items-center space-x-4">
+              {reviewStage === 'typing' && (
+                <button
+                  onClick={() => {
+                    setReviewStage('multiple-choice');
+                    setTypedAnswer('');
+                    setAnswerFeedback(null);
+                  }}
+                  className="px-3 py-1.5 bg-blue-100 hover:bg-blue-200 text-blue-700 rounded text-xs transition-colors"
+                >
+                  ← Multiple Choice
+                </button>
+              )}
+              
+              <div className="text-center">
+                <span className="text-sm font-bold text-neutral-700">
+                  {currentReviewIndex + 1}/{reviewFlashcards.length}
                 </span>
+              </div>
               </div>
               
               <button
                 onClick={nextCard}
                 disabled={currentReviewIndex === reviewFlashcards.length - 1}
-                className={`px-4 py-2 rounded-lg transition-colors ${
+              className={`px-4 py-2 rounded-lg transition-colors text-sm ${
                   currentReviewIndex === reviewFlashcards.length - 1
                     ? 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
-                    : 'bg-white hover:bg-neutral-100 text-neutral-700 border border-neutral-200'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white'
                 }`}
               >
-                Next
+              {currentReviewIndex === reviewFlashcards.length - 1 ? 'Complete' : 'Next →'}
+              </button>
+            </div>
+        </div>
+      )}
+
+      {/* Review Settings Dialog */}
+      {showReviewSettings && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl p-6 w-96 max-h-[80vh] overflow-y-auto">
+            <div className="flex items-center space-x-2 mb-6">
+              <Star className="w-6 h-6 text-indigo-600" />
+              <h3 className="text-xl font-bold text-neutral-900">Review Settings</h3>
+            </div>
+
+            <div className="space-y-6">
+              {/* Question Types with Ordering */}
+              <div>
+                <label className="block text-sm font-semibold text-neutral-700 mb-3">
+                  Question Types & Order
+                </label>
+                <div className="space-y-3">
+                  {/* Available Types */}
+                  <div>
+                    <div className="text-xs font-medium text-neutral-600 mb-2">Available Types:</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { id: 'flip', label: 'Flip Cards', desc: 'Click to reveal answer' },
+                        { id: 'multiple-choice', label: 'Multiple Choice', desc: '4 answer options' },
+                        { id: 'typing', label: 'Type Answer', desc: 'Type the correct answer' },
+                        { id: 'matching', label: 'Matching', desc: 'Match pairs together' }
+                      ].map(type => (
+                        <label key={type.id} className="flex items-start space-x-2 p-2 border rounded hover:bg-neutral-50">
+                          <input
+                            type="checkbox"
+                            checked={reviewSettings.questionTypes.includes(type.id as any)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setReviewSettings(prev => ({
+                                  ...prev,
+                                  questionTypes: [...prev.questionTypes, type.id as any]
+                                }));
+                              } else {
+                                setReviewSettings(prev => ({
+                                  ...prev,
+                                  questionTypes: prev.questionTypes.filter(t => t !== type.id)
+                                }));
+                              }
+                            }}
+                            className="w-3 h-3 text-blue-600 mt-0.5"
+                          />
+                          <div>
+                            <div className="text-xs font-medium text-neutral-900">{type.label}</div>
+                            <div className="text-xs text-neutral-500">{type.desc}</div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  {/* Current Order */}
+                  {reviewSettings.questionTypes.length > 0 && (
+                    <div>
+                      <div className="text-xs font-medium text-neutral-600 mb-2">Study Order:</div>
+                      <div className="space-y-1">
+                        {reviewSettings.questionTypes.map((type, index) => (
+                          <div key={type} className="flex items-center justify-between p-2 bg-blue-50 rounded text-xs">
+                            <span className="font-medium">
+                              {index + 1}. {type.charAt(0).toUpperCase() + type.slice(1).replace('-', ' ')}
+                            </span>
+                            <div className="flex space-x-1">
+                              <button
+                                onClick={() => {
+                                  if (index > 0) {
+                                    const newTypes = [...reviewSettings.questionTypes];
+                                    [newTypes[index], newTypes[index - 1]] = [newTypes[index - 1], newTypes[index]];
+                                    setReviewSettings(prev => ({ ...prev, questionTypes: newTypes }));
+                                  }
+                                }}
+                                disabled={index === 0}
+                                className="text-blue-600 hover:text-blue-800 disabled:text-neutral-400 px-1"
+                              >
+                                ↑
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (index < reviewSettings.questionTypes.length - 1) {
+                                    const newTypes = [...reviewSettings.questionTypes];
+                                    [newTypes[index], newTypes[index + 1]] = [newTypes[index + 1], newTypes[index]];
+                                    setReviewSettings(prev => ({ ...prev, questionTypes: newTypes }));
+                                  }
+                                }}
+                                disabled={index === reviewSettings.questionTypes.length - 1}
+                                className="text-blue-600 hover:text-blue-800 disabled:text-neutral-400 px-1"
+                              >
+                                ↓
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Other Settings */}
+              <div className="space-y-4">
+                <label className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-neutral-900">Shuffle Cards</div>
+                    <div className="text-xs text-neutral-500">Randomize order each session</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={reviewSettings.shuffle}
+                    onChange={(e) => setReviewSettings(prev => ({ ...prev, shuffle: e.target.checked }))}
+                    className="w-4 h-4 text-blue-600"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-neutral-900">Term First</div>
+                    <div className="text-xs text-neutral-500">Show term → definition (vs definition → term)</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={reviewSettings.termFirst}
+                    onChange={(e) => setReviewSettings(prev => ({ ...prev, termFirst: e.target.checked }))}
+                    className="w-4 h-4 text-blue-600"
+                  />
+                </label>
+
+                <label className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-neutral-900">Allow "Don't Know"</div>
+                    <div className="text-xs text-neutral-500">Option to reveal answer without guessing</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={reviewSettings.allowDontKnow}
+                    onChange={(e) => setReviewSettings(prev => ({ ...prev, allowDontKnow: e.target.checked }))}
+                    className="w-4 h-4 text-blue-600"
+                  />
+                </label>
+
+
+                <label className="flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-neutral-900">Adaptive Repetition</div>
+                    <div className="text-xs text-neutral-500">Show missed cards more frequently</div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={reviewSettings.sequentialMode}
+                    onChange={(e) => setReviewSettings(prev => ({ ...prev, sequentialMode: e.target.checked }))}
+                    className="w-4 h-4 text-blue-600"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3 mt-8">
+              <button
+                onClick={() => setShowReviewSettings(false)}
+                className="px-4 py-2 text-neutral-600 hover:text-neutral-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowReviewSettings(false);
+                  startReview();
+                }}
+                className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors font-medium"
+              >
+                Start Review
               </button>
             </div>
           </div>

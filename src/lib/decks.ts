@@ -4,13 +4,13 @@ import type { Deck } from '../types';
 export interface CreateDeckData {
   name: string;
   description?: string;
-  folder_id?: string;
+  parent_id?: string;
 }
 
 export interface UpdateDeckData {
   name?: string;
   description?: string;
-  folder_id?: string;
+  parent_id?: string;
 }
 
 export interface DeckWithChildren extends Deck {
@@ -32,14 +32,25 @@ export async function createDeck(data: CreateDeckData): Promise<{ data: Deck | n
       return { data: null, error: 'User not authenticated' };
     }
     
+    // Build the insert object, including parent_id if provided
+    const insertData: any = {
+      name: data.name,
+      user_id: user.id,
+    };
+    
+    if (data.description) {
+      insertData.description = data.description;
+    }
+    
+    // Include parent_id if provided (for folder-based decks in Flashcards page)
+    if (data.parent_id) {
+      insertData.parent_id = data.parent_id;
+    }
+    // If no parent_id provided, it will be NULL (root deck) - this is fine
+    
     const { data: deck, error } = await supabase
       .from('decks')
-      .insert({
-        name: data.name,
-        description: data.description,
-        folder_id: data.folder_id,
-        user_id: user.id,
-      })
+      .insert(insertData)
       .select()
       .single();
 
@@ -112,13 +123,15 @@ export async function getDecks(): Promise<{ data: DeckWithChildren[] | null; err
       });
     }
 
-    // Build folder relationships
+    // Build parent-child relationships (skip if parent_id column doesn't exist yet)
     decks.forEach(deck => {
-      if (deck.folder_id) {
-        // Note: This function is now deprecated since we're using the folder system
-        // Decks are now organized by folders, not by parent-child relationships
-        rootDecks.push(deckMap.get(deck.id)!);
+      if (deck.parent_id) {
+        const parent = deckMap.get(deck.parent_id);
+        if (parent) {
+          parent.children.push(deckMap.get(deck.id)!);
+        }
       } else {
+        // All decks are root decks for now (until parent_id is properly implemented)
         rootDecks.push(deckMap.get(deck.id)!);
       }
     });
@@ -226,14 +239,26 @@ export async function deleteDeck(id: string, moveToParent: boolean = true): Prom
     }
 
     if (moveToParent) {
-      // Move flashcards to root (no folder)
+      // Move flashcards to parent deck or root
+      const newParentId = deck.parent_id || null;
+      
       const { error: updateFlashcardsError } = await supabase
         .from('flashcards')
-        .update({ deck_id: null })
+        .update({ deck_id: newParentId })
         .eq('deck_id', id);
 
       if (updateFlashcardsError) {
         return { error: updateFlashcardsError.message };
+      }
+
+      // Move subdecks to parent deck or root
+      const { error: updateDecksError } = await supabase
+        .from('decks')
+        .update({ parent_id: newParentId })
+        .eq('parent_id', id);
+
+      if (updateDecksError) {
+        return { error: updateDecksError.message };
       }
     }
 
@@ -256,14 +281,14 @@ export async function deleteDeck(id: string, moveToParent: boolean = true): Prom
 /**
  * Move a deck to a new parent
  */
-export async function moveDeck(id: string, newFolderId: string | null): Promise<{ error: string | null }> {
+export async function moveDeck(id: string, newParentId: string | null): Promise<{ error: string | null }> {
   try {
     const supabase = requireSupabaseClient();
     
     const { error } = await supabase
       .from('decks')
       .update({
-        folder_id: newFolderId,
+        parent_id: newParentId,
         updated_at: new Date().toISOString(),
       })
       .eq('id', id);
