@@ -1,5 +1,5 @@
 import { requireSupabaseClient } from './supabase';
-import type { Folder } from '../types';
+import type { Folder, Document } from '../types';
 
 export interface CreateFolderData {
   name: string;
@@ -14,6 +14,7 @@ export interface UpdateFolderData {
 export interface FolderWithChildren extends Folder {
   children: FolderWithChildren[];
   document_count: number;
+  documents?: Document[];
 }
 
 /**

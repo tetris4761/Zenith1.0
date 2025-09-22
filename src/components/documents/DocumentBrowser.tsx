@@ -10,7 +10,8 @@ import {
   Clock
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import type { Document, FolderWithChildren } from '../../lib/folders';
+import type { Document } from '../../types';
+import type { FolderWithChildren } from '../../lib/folders';
 
 interface DocumentBrowserProps {
   isOpen: boolean;

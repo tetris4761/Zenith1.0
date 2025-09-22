@@ -477,7 +477,7 @@ export default function RightPanel({
                     <div className="flex items-start justify-between mb-1">
                       <div className="text-xs text-blue-600 dark:text-blue-400">Selected text:</div>
                       <button
-                        onClick={() => setSelectedText('')}
+                        onClick={() => onClearSelectedText?.()}
                         className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors"
                       >
                         Clear

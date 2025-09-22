@@ -3,7 +3,8 @@ import { FileText } from 'lucide-react';
 import DocumentEditor from './DocumentEditor';
 import DocumentBrowser from './DocumentBrowser';
 import RightPanel from './RightPanel';
-import type { Document, FolderWithChildren } from '../../lib/folders';
+import type { Document } from '../../types';
+import type { FolderWithChildren } from '../../lib/folders';
 
 interface DocumentLayoutProps {
   // Document state
