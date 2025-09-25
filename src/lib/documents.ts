@@ -161,6 +161,45 @@ export async function deleteDocument(id: string): Promise<{ error: string | null
 }
 
 /**
+ * Duplicate an existing document
+ */
+export async function duplicateDocument(originalDocument: Document): Promise<{ data: Document | null; error: string | null }> {
+  try {
+    const supabase = requireSupabaseClient();
+    
+    // Get the current user ID from the auth context
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (!user) {
+      return { data: null, error: 'User not authenticated' };
+    }
+    
+    // Create duplicate title
+    const duplicateTitle = `Copy of ${originalDocument.title}`;
+    
+    const { data: document, error } = await supabase
+      .from('documents')
+      .insert({
+        title: duplicateTitle,
+        content: originalDocument.content,
+        folder_id: originalDocument.folder_id,
+        user_id: user.id,
+        last_accessed: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data: document, error: null };
+  } catch (err) {
+    return { data: null, error: 'Failed to duplicate document' };
+  }
+}
+
+/**
  * Search documents by title or content
  */
 export async function searchDocuments(query: string): Promise<{ data: Document[] | null; error: string | null }> {

@@ -4,7 +4,8 @@ import {
   createDocument, 
   getDocuments, 
   updateDocument, 
-  deleteDocument
+  deleteDocument,
+  duplicateDocument
 } from '../lib/documents';
 import { 
   createFolder, 
@@ -208,6 +209,29 @@ export default function Documents() {
     }
   };
 
+  const handleDuplicateDocument = async (document: Document) => {
+    try {
+      setError(null);
+      const { data: duplicatedDocument, error } = await duplicateDocument(document);
+      
+      if (error) {
+        setError(error);
+        return;
+      }
+
+      if (duplicatedDocument) {
+        // Add the duplicated document to the beginning of the list
+        setDocuments(prev => [duplicatedDocument, ...prev]);
+        
+        // Optionally open the duplicated document
+        setSelectedDocument(duplicatedDocument);
+        setShowNewDocument(false);
+      }
+    } catch (err) {
+      setError('Failed to duplicate document');
+    }
+  };
+
   const handleSelectDocument = (document: Document) => {
     setSelectedDocument(document);
     setShowNewDocument(false);
@@ -323,6 +347,7 @@ export default function Documents() {
         onDeleteFolder={handleDeleteFolder}
         onDeleteDocument={handleDeleteDocument}
         onMoveFolder={handleMoveFolder}
+        onDuplicateDocument={handleDuplicateDocument}
         
         // Panel state
         onInsertLink={() => setShowLinkDialog(true)}

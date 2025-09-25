@@ -31,6 +31,7 @@ interface DocumentLayoutProps {
   onDeleteFolder: (folderId: string) => void;
   onDeleteDocument: (documentId: string) => void;
   onMoveFolder: (folderId: string, newParentId: string | null) => void;
+  onDuplicateDocument: (document: Document) => void;
   
   // Panel state
   onInsertLink: () => void;
@@ -61,6 +62,7 @@ export default function DocumentLayout({
   onDeleteFolder,
   onDeleteDocument,
   onMoveFolder,
+  onDuplicateDocument,
   onInsertLink,
   onInsertImage,
   onBackToDashboard
@@ -129,6 +131,7 @@ export default function DocumentLayout({
           onEditFolder={onEditFolder}
           onDeleteFolder={onDeleteFolder}
           onDeleteDocument={onDeleteDocument}
+          onDuplicateDocument={onDuplicateDocument}
         />
       )}
 

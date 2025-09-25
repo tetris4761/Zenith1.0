@@ -16,6 +16,7 @@ import {
   Download
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { duplicateDocument } from '../../lib/documents';
 import type { Document } from '../../types';
 import type { FolderWithChildren } from '../../lib/folders';
 
@@ -31,6 +32,7 @@ interface DocumentsDashboardProps {
   onEditFolder: (folder: FolderWithChildren) => void;
   onDeleteFolder: (folderId: string) => void;
   onDeleteDocument: (documentId: string) => void;
+  onDuplicateDocument: (document: Document) => void;
 }
 
 export default function DocumentsDashboard({
@@ -44,7 +46,8 @@ export default function DocumentsDashboard({
   onCreateDocument,
   onEditFolder,
   onDeleteFolder,
-  onDeleteDocument
+  onDeleteDocument,
+  onDuplicateDocument
 }: DocumentsDashboardProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -121,16 +124,9 @@ export default function DocumentsDashboard({
     if (!document) return;
 
     try {
-      // Create a duplicate with "Copy of" prefix
-      const duplicateTitle = `Copy of ${document.title}`;
-      const duplicateContent = document.content;
-      
-      // This would need to be implemented in the parent component
-      // For now, we'll just close the context menu
+      // Call the parent component's duplicate handler
+      onDuplicateDocument(document);
       setContextMenu(null);
-      
-      // TODO: Implement duplicate functionality
-      console.log('Duplicate document:', documentId);
     } catch (error) {
       console.error('Failed to duplicate document:', error);
     }
