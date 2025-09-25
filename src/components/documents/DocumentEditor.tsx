@@ -19,7 +19,8 @@ import {
   BookOpen,
   Edit3,
   Check,
-  X
+  X,
+  ArrowLeft
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import EditorToolbar from './EditorToolbar';
@@ -246,9 +247,9 @@ export default function DocumentEditor({
             <button
               onClick={onOpenBrowser}
               className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors"
-              title="Open document browser"
+              title="Back to documents"
             >
-              <Menu className="w-5 h-5 text-neutral-600 dark:text-neutral-400" />
+              <ArrowLeft className="w-5 h-5 text-neutral-600 dark:text-neutral-400" />
             </button>
             
             {isNewDocument ? (
