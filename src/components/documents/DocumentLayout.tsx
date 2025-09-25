@@ -35,6 +35,9 @@ interface DocumentLayoutProps {
   // Panel state
   onInsertLink: () => void;
   onInsertImage: () => void;
+  
+  // Navigation
+  onBackToDashboard?: () => void;
 }
 
 export default function DocumentLayout({
@@ -59,7 +62,8 @@ export default function DocumentLayout({
   onDeleteDocument,
   onMoveFolder,
   onInsertLink,
-  onInsertImage
+  onInsertImage,
+  onBackToDashboard
 }: DocumentLayoutProps) {
   const [showBrowser, setShowBrowser] = useState(false);
   const [showRightPanel, setShowRightPanel] = useState(false);
@@ -71,7 +75,15 @@ export default function DocumentLayout({
   const [pendingBack, setPendingBack] = useState('');
   const [selectedText, setSelectedText] = useState('');
 
-  const handleOpenBrowser = () => setShowBrowser(true);
+  const handleOpenBrowser = () => {
+    // Go back to dashboard instead of opening browser modal
+    if (onBackToDashboard) {
+      onBackToDashboard();
+    } else {
+      setSelectedDocument(null);
+      setShowNewDocument(false);
+    }
+  };
   const handleCloseBrowser = () => setShowBrowser(false);
   const handleOpenAIPanel = () => setShowRightPanel(true);
   const handleToggleRightPanel = () => setShowRightPanel(!showRightPanel);

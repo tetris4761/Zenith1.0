@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   Folder, 
   FileText, 
@@ -8,7 +8,12 @@ import {
   Star,
   MoreHorizontal,
   Grid3X3,
-  List
+  List,
+  Copy,
+  Trash2,
+  Move,
+  Edit,
+  Download
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import type { Document } from '../../types';
@@ -43,6 +48,13 @@ export default function DocumentsDashboard({
 }: DocumentsDashboardProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [contextMenu, setContextMenu] = useState<{
+    type: 'document' | 'folder';
+    id: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   // Get recent documents (last 10, sorted by updated_at)
   const recentDocuments = useMemo(() => {
@@ -76,6 +88,76 @@ export default function DocumentsDashboard({
     if (diffInHours < 24) return `${diffInHours}h ago`;
     if (diffInHours < 48) return 'Yesterday';
     return date.toLocaleDateString();
+  };
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(event.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  // Context menu handlers
+  const handleContextMenu = (e: React.MouseEvent, type: 'document' | 'folder', id: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({
+      type,
+      id,
+      x: e.clientX,
+      y: e.clientY
+    });
+  };
+
+  const handleDuplicateDocument = async (documentId: string) => {
+    const document = documents.find(doc => doc.id === documentId);
+    if (!document) return;
+
+    try {
+      // Create a duplicate with "Copy of" prefix
+      const duplicateTitle = `Copy of ${document.title}`;
+      const duplicateContent = document.content;
+      
+      // This would need to be implemented in the parent component
+      // For now, we'll just close the context menu
+      setContextMenu(null);
+      
+      // TODO: Implement duplicate functionality
+      console.log('Duplicate document:', documentId);
+    } catch (error) {
+      console.error('Failed to duplicate document:', error);
+    }
+  };
+
+  const handleMoveDocument = (documentId: string) => {
+    setContextMenu(null);
+    // TODO: Implement move functionality
+    console.log('Move document:', documentId);
+  };
+
+  const handleDownloadDocument = (documentId: string) => {
+    const document = documents.find(doc => doc.id === documentId);
+    if (!document) return;
+
+    // Create a blob with the document content
+    const blob = new Blob([document.content], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${document.title}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    setContextMenu(null);
   };
 
   if (loading) {
@@ -198,7 +280,10 @@ export default function DocumentsDashboard({
                     <div className="w-10 h-10 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center">
                       <FileText className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                     </div>
-                    <button className="opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-opacity">
+                    <button 
+                      onClick={(e) => handleContextMenu(e, 'document', doc.id)}
+                      className="opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-opacity"
+                    >
                       <MoreHorizontal className="w-4 h-4" />
                     </button>
                   </div>
@@ -264,7 +349,10 @@ export default function DocumentsDashboard({
                     <div className="w-10 h-10 bg-orange-100 dark:bg-orange-900/30 rounded-lg flex items-center justify-center">
                       <Folder className="w-5 h-5 text-orange-600 dark:text-orange-400" />
                     </div>
-                    <button className="opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-opacity">
+                    <button 
+                      onClick={(e) => handleContextMenu(e, 'folder', folder.id)}
+                      className="opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-opacity"
+                    >
                       <MoreHorizontal className="w-4 h-4" />
                     </button>
                   </div>
@@ -356,6 +444,82 @@ export default function DocumentsDashboard({
                 <span>Create Folder</span>
               </button>
             </div>
+          </div>
+        )}
+
+        {/* Context Menu */}
+        {contextMenu && (
+          <div
+            ref={contextMenuRef}
+            className="fixed bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg shadow-lg py-2 z-50 min-w-[160px]"
+            style={{
+              left: contextMenu.x,
+              top: contextMenu.y,
+            }}
+          >
+            {contextMenu.type === 'document' ? (
+              <>
+                <button
+                  onClick={() => handleDuplicateDocument(contextMenu.id)}
+                  className="w-full px-4 py-2 text-left text-sm text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700 flex items-center space-x-2"
+                >
+                  <Copy className="w-4 h-4" />
+                  <span>Duplicate</span>
+                </button>
+                <button
+                  onClick={() => handleMoveDocument(contextMenu.id)}
+                  className="w-full px-4 py-2 text-left text-sm text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700 flex items-center space-x-2"
+                >
+                  <Move className="w-4 h-4" />
+                  <span>Move</span>
+                </button>
+                <button
+                  onClick={() => handleDownloadDocument(contextMenu.id)}
+                  className="w-full px-4 py-2 text-left text-sm text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700 flex items-center space-x-2"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download</span>
+                </button>
+                <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
+                <button
+                  onClick={() => {
+                    onDeleteDocument(contextMenu.id);
+                    setContextMenu(null);
+                  }}
+                  className="w-full px-4 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center space-x-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Delete</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => {
+                    const folder = folders.find(f => f.id === contextMenu.id);
+                    if (folder) {
+                      onEditFolder(folder);
+                    }
+                    setContextMenu(null);
+                  }}
+                  className="w-full px-4 py-2 text-left text-sm text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700 flex items-center space-x-2"
+                >
+                  <Edit className="w-4 h-4" />
+                  <span>Rename</span>
+                </button>
+                <div className="border-t border-neutral-200 dark:border-neutral-700 my-1"></div>
+                <button
+                  onClick={() => {
+                    onDeleteFolder(contextMenu.id);
+                    setContextMenu(null);
+                  }}
+                  className="w-full px-4 py-2 text-left text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center space-x-2"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Delete</span>
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>

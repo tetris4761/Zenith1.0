@@ -327,6 +327,12 @@ export default function Documents() {
         // Panel state
         onInsertLink={() => setShowLinkDialog(true)}
         onInsertImage={() => setShowImageDialog(true)}
+        
+        // Navigation
+        onBackToDashboard={() => {
+          setSelectedDocument(null);
+          setShowNewDocument(false);
+        }}
       />
 
       {/* Dialogs */}
