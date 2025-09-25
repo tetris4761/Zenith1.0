@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { FileText } from 'lucide-react';
 import DocumentEditor from './DocumentEditor';
 import DocumentBrowser from './DocumentBrowser';
+import DocumentsDashboard from './DocumentsDashboard';
 import RightPanel from './RightPanel';
 import type { Document } from '../../types';
 import type { FolderWithChildren } from '../../lib/folders';
@@ -102,25 +103,21 @@ export default function DocumentLayout({
 
   return (
     <div className="h-full w-full flex relative">
-      {/* Document Browser (when no document selected) */}
+      {/* Documents Dashboard (when no document selected) */}
       {shouldShowBrowser && (
-        <div className="flex-1 flex items-center justify-center bg-neutral-50 dark:bg-neutral-900">
-          <div className="text-center">
-            <FileText className="w-16 h-16 text-neutral-300 dark:text-neutral-600 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-neutral-900 dark:text-neutral-100 mb-2">
-              No document selected
-            </h3>
-            <p className="text-neutral-600 dark:text-neutral-400 mb-6">
-              Choose a document from the browser or create a new one
-            </p>
-            <button
-              onClick={handleOpenBrowser}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-            >
-              Open Document Browser
-            </button>
-          </div>
-        </div>
+        <DocumentsDashboard
+          folders={folders}
+          documents={documents}
+          loading={loading}
+          error={error}
+          onSelectFolder={onSelectFolder}
+          onSelectDocument={onSelectDocument}
+          onCreateFolder={onCreateFolder}
+          onCreateDocument={onCreateDocument}
+          onEditFolder={onEditFolder}
+          onDeleteFolder={onDeleteFolder}
+          onDeleteDocument={onDeleteDocument}
+        />
       )}
 
       {/* Document Editor (when document is selected) */}
