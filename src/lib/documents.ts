@@ -200,6 +200,33 @@ export async function duplicateDocument(originalDocument: Document): Promise<{ d
 }
 
 /**
+ * Move a document to a different folder
+ */
+export async function moveDocument(documentId: string, folderId: string | null): Promise<{ data: Document | null; error: string | null }> {
+  try {
+    const supabase = requireSupabaseClient();
+    
+    const { data: document, error } = await supabase
+      .from('documents')
+      .update({
+        folder_id: folderId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', documentId)
+      .select()
+      .single();
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data: document, error: null };
+  } catch (err) {
+    return { data: null, error: 'Failed to move document' };
+  }
+}
+
+/**
  * Search documents by title or content
  */
 export async function searchDocuments(query: string): Promise<{ data: Document[] | null; error: string | null }> {

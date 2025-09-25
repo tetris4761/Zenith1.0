@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { duplicateDocument } from '../../lib/documents';
+import MoveDocumentDialog from './MoveDocumentDialog';
 import type { Document } from '../../types';
 import type { FolderWithChildren } from '../../lib/folders';
 
@@ -33,6 +34,7 @@ interface DocumentsDashboardProps {
   onDeleteFolder: (folderId: string) => void;
   onDeleteDocument: (documentId: string) => void;
   onDuplicateDocument: (document: Document) => void;
+  onMoveDocument: (documentId: string, folderId: string | null) => void;
 }
 
 export default function DocumentsDashboard({
@@ -47,7 +49,8 @@ export default function DocumentsDashboard({
   onEditFolder,
   onDeleteFolder,
   onDeleteDocument,
-  onDuplicateDocument
+  onDuplicateDocument,
+  onMoveDocument
 }: DocumentsDashboardProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -57,6 +60,10 @@ export default function DocumentsDashboard({
     x: number;
     y: number;
   } | null>(null);
+  const [moveDialog, setMoveDialog] = useState<{
+    isOpen: boolean;
+    document: Document | null;
+  }>({ isOpen: false, document: null });
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
   // Get recent documents (last 10, sorted by updated_at)
@@ -133,9 +140,16 @@ export default function DocumentsDashboard({
   };
 
   const handleMoveDocument = (documentId: string) => {
+    const document = documents.find(doc => doc.id === documentId);
+    if (!document) return;
+
     setContextMenu(null);
-    // TODO: Implement move functionality
-    console.log('Move document:', documentId);
+    setMoveDialog({ isOpen: true, document });
+  };
+
+  const handleMoveConfirm = (documentId: string, folderId: string | null) => {
+    onMoveDocument(documentId, folderId);
+    setMoveDialog({ isOpen: false, document: null });
   };
 
   const handleDownloadDocument = (documentId: string) => {
@@ -518,6 +532,15 @@ export default function DocumentsDashboard({
             )}
           </div>
         )}
+
+        {/* Move Document Dialog */}
+        <MoveDocumentDialog
+          isOpen={moveDialog.isOpen}
+          onClose={() => setMoveDialog({ isOpen: false, document: null })}
+          onMove={handleMoveConfirm}
+          document={moveDialog.document}
+          folders={folders}
+        />
       </div>
     </div>
   );

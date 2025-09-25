@@ -5,7 +5,8 @@ import {
   getDocuments, 
   updateDocument, 
   deleteDocument,
-  duplicateDocument
+  duplicateDocument,
+  moveDocument
 } from '../lib/documents';
 import { 
   createFolder, 
@@ -232,6 +233,32 @@ export default function Documents() {
     }
   };
 
+  const handleMoveDocument = async (documentId: string, folderId: string | null) => {
+    try {
+      setError(null);
+      const { data: movedDocument, error } = await moveDocument(documentId, folderId);
+      
+      if (error) {
+        setError(error);
+        return;
+      }
+
+      if (movedDocument) {
+        // Update the document in the list
+        setDocuments(prev => 
+          prev.map(doc => doc.id === documentId ? movedDocument : doc)
+        );
+        
+        // Update selected document if it's the one being moved
+        if (selectedDocument?.id === documentId) {
+          setSelectedDocument(movedDocument);
+        }
+      }
+    } catch (err) {
+      setError('Failed to move document');
+    }
+  };
+
   const handleSelectDocument = (document: Document) => {
     setSelectedDocument(document);
     setShowNewDocument(false);
@@ -348,6 +375,7 @@ export default function Documents() {
         onDeleteDocument={handleDeleteDocument}
         onMoveFolder={handleMoveFolder}
         onDuplicateDocument={handleDuplicateDocument}
+        onMoveDocument={handleMoveDocument}
         
         // Panel state
         onInsertLink={() => setShowLinkDialog(true)}
