@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Settings, LogOut, User, Bell, Sun, Moon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { PomodoroMiniControl } from './PomodoroMiniControl';
 
 interface TopBarProps {
   user: { id: string; email: string } | null;
@@ -26,6 +27,11 @@ export default function TopBar({ user }: TopBarProps) {
         <h2 className="text-lg font-semibold text-neutral-900 dark:text-neutral-100">
           Zenith
         </h2>
+      </div>
+
+      {/* Pomodoro Timer */}
+      <div className="flex-1 flex justify-center">
+        <PomodoroMiniControl />
       </div>
 
       <div className="flex items-center space-x-4">
